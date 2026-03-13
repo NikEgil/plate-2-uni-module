@@ -1,0 +1,158 @@
+#include <Arduino.h>
+#include <HardwareSerial.h>
+#include "LoRa_E220.h"
+#define ENABLE_RSSI 
+// UART для связи с E22-900T22S
+#define MySerial Serial2 // или Serial1, в зависимости от GPIO
+// #define RX_PIN 16        // GPIO16 — RXD модуля
+// #define TX_PIN 17        // GPIO17 — TXD модуля
+LoRa_E220 e220ttl(&MySerial, 15, 21, 19); //  RX AUX M0 M1
+// Управление режимами
+
+// void blink(int count, int delayy)
+// {
+//   for (int i = 0; i < count; i++)
+//   {
+//     digitalWrite(LED_PIN, HIGH);
+//     delay(delayy);
+//     digitalWrite(LED_PIN, LOW);
+//     delay(delayy);
+//   }
+// }
+
+void printParameters(struct Configuration configuration);
+void printModuleInformation(struct ModuleInformation moduleInformation);
+
+void setup()
+{
+
+  Serial.begin(115200); // монитор порта
+  while (!Serial)
+  {
+  };
+  delay(500);
+
+  Serial.println("hello"); // Startup all pins and UART
+  e220ttl.begin();
+  delay(500);
+
+  Serial.println("Hi, I'm going to send message!");
+
+  // Send message
+  ResponseStatus rs = e220ttl.sendMessage("Hello, world?");
+  // Check If there is some problem of succesfully send
+  Serial.println(rs.getResponseDescription());
+}
+
+void loop()
+{
+  // If something available
+  if (e220ttl.available()>1) {
+	  // read the String message
+#ifdef ENABLE_RSSI
+	ResponseContainer rc = e220ttl.receiveMessageRSSI();
+#else
+	ResponseContainer rc = e220ttl.receiveMessage();
+#endif
+	// Is something goes wrong print error
+	if (rc.status.code!=1){
+		Serial.println(rc.status.getResponseDescription());
+	}else{
+		// Print the data received
+		Serial.println(rc.status.getResponseDescription());
+		Serial.println(rc.data);
+#ifdef ENABLE_RSSI
+		Serial.print("RSSI: "); Serial.println(rc.rssi, DEC);
+#endif
+	}
+  }
+  if (Serial.available()) {
+	  String input = Serial.readString();
+	  e220ttl.sendMessage(input);
+  }
+}
+
+void printParameters(struct Configuration configuration)
+{
+  Serial.println("----------------------------------------");
+
+  Serial.print(F("HEAD : "));
+  Serial.print(configuration.COMMAND, HEX);
+  Serial.print(" ");
+  Serial.print(configuration.STARTING_ADDRESS, HEX);
+  Serial.print(" ");
+  Serial.println(configuration.LENGHT, HEX);
+  Serial.println(F(" "));
+  Serial.print(F("AddH : "));
+  Serial.println(configuration.ADDH, HEX);
+  Serial.print(F("AddL : "));
+  Serial.println(configuration.ADDL, HEX);
+  Serial.println(F(" "));
+  Serial.print(F("Chan : "));
+  Serial.print(configuration.CHAN, DEC);
+  Serial.print(" -> ");
+  Serial.println(configuration.getChannelDescription());
+  Serial.println(F(" "));
+  Serial.print(F("SpeedParityBit     : "));
+  Serial.print(configuration.SPED.uartParity, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.SPED.getUARTParityDescription());
+  Serial.print(F("SpeedUARTDatte     : "));
+  Serial.print(configuration.SPED.uartBaudRate, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.SPED.getUARTBaudRateDescription());
+  Serial.print(F("SpeedAirDataRate   : "));
+  Serial.print(configuration.SPED.airDataRate, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.SPED.getAirDataRateDescription());
+  Serial.println(F(" "));
+  Serial.print(F("OptionSubPacketSett: "));
+  Serial.print(configuration.OPTION.subPacketSetting, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.OPTION.getSubPacketSetting());
+  Serial.print(F("OptionTranPower    : "));
+  Serial.print(configuration.OPTION.transmissionPower, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.OPTION.getTransmissionPowerDescription());
+  Serial.print(F("OptionRSSIAmbientNo: "));
+  Serial.print(configuration.OPTION.RSSIAmbientNoise, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.OPTION.getRSSIAmbientNoiseEnable());
+  Serial.println(F(" "));
+  Serial.print(F("TransModeWORPeriod : "));
+  Serial.print(configuration.TRANSMISSION_MODE.WORPeriod, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.TRANSMISSION_MODE.getWORPeriodByParamsDescription());
+  Serial.print(F("TransModeEnableLBT : "));
+  Serial.print(configuration.TRANSMISSION_MODE.enableLBT, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.TRANSMISSION_MODE.getLBTEnableByteDescription());
+  Serial.print(F("TransModeEnableRSSI: "));
+  Serial.print(configuration.TRANSMISSION_MODE.enableRSSI, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.TRANSMISSION_MODE.getRSSIEnableByteDescription());
+  Serial.print(F("TransModeFixedTrans: "));
+  Serial.print(configuration.TRANSMISSION_MODE.fixedTransmission, BIN);
+  Serial.print(" -> ");
+  Serial.println(configuration.TRANSMISSION_MODE.getFixedTransmissionDescription());
+
+  Serial.println("----------------------------------------");
+}
+void printModuleInformation(struct ModuleInformation moduleInformation)
+{
+  Serial.println("----------------------------------------");
+  Serial.print(F("HEAD: "));
+  Serial.print(moduleInformation.COMMAND, HEX);
+  Serial.print(" ");
+  Serial.print(moduleInformation.STARTING_ADDRESS, HEX);
+  Serial.print(" ");
+  Serial.println(moduleInformation.LENGHT, DEC);
+
+  Serial.print(F("Model no.: "));
+  Serial.println(moduleInformation.model, HEX);
+  Serial.print(F("Version  : "));
+  Serial.println(moduleInformation.version, HEX);
+  Serial.print(F("Features : "));
+  Serial.println(moduleInformation.features, HEX);
+  Serial.println("----------------------------------------");
+}
