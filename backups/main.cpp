@@ -40,7 +40,7 @@ void printHEX(byte data[], int len)
 	Serial.println();
 }
 
-void saveArrayToFlash()
+void saveArrayToFlash()		
 {
 	byte t[5] = {0x00, 0x24, 0x00, 0x02, 0x00};
 	preferences.begin("my-data", false); // Открываем пространство имен "my-data"
@@ -53,7 +53,7 @@ void saveArrayToFlash()
 }
 
 bool loadArrayFromFlash()
-{
+{	
 	preferences.begin("my-data", true); // Открыть в режиме чтения
 	size_t len = preferences.getBytes("array", tableSens, 8);
 	preferences.end();

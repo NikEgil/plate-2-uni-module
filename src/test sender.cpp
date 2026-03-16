@@ -183,7 +183,8 @@ void RS485_1_activate(bool act)
 		rs485Serial.end();
 		Serial.println("RS1 DEactivate");
 	}
-	delay(500);
+	digitalWrite(REDE,LOW);
+	delay(200);
 }
 
 void RS485_2_activate(bool act)
@@ -198,27 +199,25 @@ void RS485_2_activate(bool act)
 		rs485Serial.end();
 		Serial.println("RS2 DEactivate");
 	}
+	digitalWrite(REDE,LOW);
 	delay(200);
 }
 
 // void LORA_config_get()
 // {
 // 	Serial.println("lora config get");
-
 // 	ResponseStructContainer c;
 // 	c = e220ttl.getConfiguration();
 // 	// It's important get configuration pointer before all other operation
 // 	Configuration configuration = *(Configuration *)c.data;
 // 	Serial.println(c.status.getResponseDescription());
 // 	Serial.println(c.status.code);
-
 // 	printParameters(configuration);
 // }
 
 // void LORA_config_set(int chanel, byte add)
 // {
 // 	Serial.println("lora config set");
-
 // 	ResponseStructContainer c;
 // 	c = e220ttl.getConfiguration();
 // 	Configuration configuration = *(Configuration *)c.data;
@@ -229,16 +228,13 @@ void RS485_2_activate(bool act)
 // 	configuration.SPED.airDataRate = AIR_DATA_RATE_010_24;
 // 	// AIR_DATA_RATE_010_24
 // 	configuration.SPED.uartParity = MODE_00_8N1;
-
 // 	configuration.OPTION.subPacketSetting = SPS_200_00;
 // 	configuration.OPTION.RSSIAmbientNoise = RSSI_AMBIENT_NOISE_ENABLED;
 // 	configuration.OPTION.transmissionPower = POWER_10;
-
 // 	configuration.TRANSMISSION_MODE.enableRSSI = RSSI_ENABLED;
 // 	configuration.TRANSMISSION_MODE.fixedTransmission = 0;
 // 	configuration.TRANSMISSION_MODE.enableLBT = LBT_ENABLED;
 // 	configuration.TRANSMISSION_MODE.WORPeriod = WOR_2000_011;
-
 // 	ResponseStatus rs = e220ttl.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
 // 	Serial.println(rs.getResponseDescription());
 // 	Serial.println(rs.code);
@@ -379,7 +375,6 @@ void byteArrayToHexString(const byte *byteArray, int length, String str)
 // 					newID[i] = (byte)rc.data.charAt(i);
 // 				}
 // 				printHEX(newID, 3);
-
 // 				if (myID[3] == newID[3])
 // 				{
 // 					Serial.println(" OK Recive");
@@ -415,15 +410,10 @@ void byteArrayToHexString(const byte *byteArray, int length, String str)
 // 	}
 // }
 
-void port_activate(bool act)
-{
-}
-
 // void sender()
 // {
 // 	LORA_activate(true);
 // 	delay(200);
-
 // 	ResponseStatus s;
 // 	byte combinedData[10] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x11};
 // 	for (int i = 0; i < 10; i++)
@@ -466,14 +456,11 @@ void port_activate(bool act)
 
 // void connect()
 // {
-
 // 	Serial.print(F("Modem Info: "));
 // 	String modemInfo = modem.getModemRevision();
 // 	String modemModel = modem.getModemManufacturer();
-
 // 	Serial.println(modemInfo);
 // 	Serial.println(modemModel);
-
 // 	// Wait for network registration
 // 	Serial.print(F("Waiting for network..."));
 // 	if (!modem.waitForNetwork())
@@ -482,7 +469,6 @@ void port_activate(bool act)
 // 		return;
 // 	}
 // 	Serial.println(F(" Network connected!"));
-
 // 	// Establish GPRS connection
 // 	Serial.print(F("Connecting to GPRS..."));
 // 	if (!modem.gprsConnect(apn, gprsUser, gprsPass))
@@ -491,11 +477,8 @@ void port_activate(bool act)
 // 		return;
 // 	}
 // 	Serial.println(F(" GPRS connected!"));
-
 // 	int year, month, day, hour, minute, second;
-
 // 	modem.getGsmLocationTime(&year, &month, &day, &hour, &minute, &second);
-
 // 	Serial.println(year);
 // 	Serial.println(month);
 // 	Serial.println(day);
@@ -600,6 +583,225 @@ void enable_sens(int port)
 	delay(500);
 }
 
+// bool searchmulti(int port)
+// {
+// 	byte req1[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
+// 	int lenresponse = 7;
+// 	byte response[lenresponse] = {};
+// 	sendRS485Data(req1, 8);
+// 	delay(500);
+// 	rs485Serial.readBytes(response, lenresponse);
+// 	rs485Serial.flush();
+// 	Serial.println("founding multisens");
+// 	printHEX(req1, lenresponse);
+// 	printHEX(response, lenresponse);
+// 	if (response[0] == 0x01)
+// 	{
+// 		Serial.println("ret true");
+// 		return true;
+// 	}
+// 	else
+// 	{
+// 		Serial.println("ret false");
+// 		return false;
+// 	}
+// }
+
+bool searche_multisens()
+{
+	Serial.println("founding multisens");
+
+	byte req1[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
+	int lenresponse1 = 7;
+	byte response1[lenresponse1] = {};
+	sendRS485Data(req1, 8);
+	delay(500);
+	rs485Serial.readBytes(response1, lenresponse1);
+	rs485Serial.flush();
+	Serial.println("	request:");
+	printHEX(req1, lenresponse1);
+	Serial.println("	response:");
+	printHEX(response1, lenresponse1);
+	if (response1[0] == 0x01)
+	{
+		Serial.println("multisens is FOUND!!!");
+
+		return true;
+	}
+	else{
+		return false;
+	}
+}
+
+void deact()
+{
+	enable_sens(0);
+	RS485_1_activate(false);
+	RS485_2_activate(false);
+	en_12v(false);
+	en_5v(false);
+}
+
+bool searchSensors_1()
+{
+	pinMode(LED_PIN, LOW);
+	int port = 1;
+	en_12v(true);
+	en_5v(true);
+	enable_sens(port);
+	RS485_1_activate(true);
+
+	delay(500);
+
+	Serial.println("Search sensors, port 	1");
+
+	if (searche_multisens())
+	{
+		saveArrayToFlash();
+		blink(1, 1000);
+		tableSens[port] = 0x01;
+		saveArrayToFlash();
+		blink(1, 1000);
+		return true;
+	}
+	Serial.println("founding sens");
+
+	Serial.println("	request:");
+	byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
+
+	int lenreq = 8;
+	int lenresponse = 32;
+	byte response[lenresponse] = {};
+	printHEX(req, lenreq);
+	sendRS485Data(req, lenreq);
+	delay(500);
+	rs485Serial.readBytes(response, lenresponse);
+	rs485Serial.flush();
+	Serial.println("	responses:");
+	printHEX(response, lenresponse);
+	if (response[0] == 0x00)
+	{
+		for (int i = 0; i < 40; i++)
+		{
+			delay(500);
+			rs485Serial.readBytes(response, lenresponse);
+			rs485Serial.flush();
+			printHEX(response, lenresponse);
+			if (response[0] != 0)
+			{
+				break;
+			}
+		}
+	}
+
+	Serial.print((int)response[0]);
+	Serial.println("		FOUND		!!!");
+	if (response[0] == 0x24)
+	{
+		Serial.println("meteostation detected");
+	}
+	else if (response[0] != 0x00)
+	{
+		Serial.println("another sens detected");
+	}
+	else
+	{
+		Serial.println("		NOT SENS	!!!");
+	}
+
+	tableSens[port] = response[0];
+	saveArrayToFlash();
+	deact();
+	if (response[0] != 0x00)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+// bool searchSensors_2()
+// {
+// 	Serial.println("	SEARCH SENS 234");
+// 	LORA_activate(false);
+// 	pinMode(LED_PIN, LOW);
+// 	port_activate(7, true);
+// 	RS485_2_activate(true);
+// 	for (int port = 3; port < 4; port++)
+// 	{
+// 		port_activate(port, true);
+// 		// delay(5000000);
+// 		delay(5000);
+// 		byte req1[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
+// 		int lenresponse1 = 7;
+// 		byte response1[lenresponse1] = {};
+// 		sendRS485Data(req1, 8);
+// 		delay(500);
+// 		rs485Serial.readBytes(response1, lenresponse1);
+// 		rs485Serial.flush();
+// 		Serial.println("founding multisens");
+// 		printHEX(req1, lenresponse1);
+// 		printHEX(response1, lenresponse1);
+// 		if (response1[0] == 0x01)
+// 		{
+// 			tableSens[port] = response1[0];
+// 			Serial.println("multisens is FOUND!!!");
+// 			port_activate(7, false);
+// 			RS485_2_activate(false);
+// 			saveArrayToFlash();
+// 			if (tableSens[port] != 0x00)
+// 			{
+// 				return true;
+// 			}
+// 			else
+// 			{
+// 				return false;
+// 			}
+// 		}
+// 		else
+// 		{
+// 			byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
+// 			int lenreq = 8;
+// 			int lenresponse = 32;
+// 			byte response[lenresponse] = {};
+// 			Serial.print("Search sensors, port 	2");
+// 			Serial.println("	request:");
+// 			printHEX(req, lenreq);
+// 			sendRS485Data(req, lenreq);
+// 			delay(500);
+// 			rs485Serial.readBytes(response, lenresponse);
+// 			rs485Serial.flush();
+// 			Serial.println("	response:");
+// 			printHEX(response, lenresponse);
+// 			if (response[0] != 0)
+// 			{
+// 				Serial.print((int)response[0]);
+// 				Serial.println("		FOUND		!!!");
+// 				blink(port, 500);
+// 			}
+// 			else
+// 			{
+// 				Serial.println("		NOT SENS	!!!");
+// 			}
+// 			port_activate(port, false);
+// 			tableSens[port] = response[0];
+// 		}
+// 		port_activate(7, false);
+// 		RS485_2_activate(false);
+// 		saveArrayToFlash();
+// 		if (tableSens[port] != 0x00)
+// 		{
+// 			return true;
+// 		}
+// 		else
+// 		{
+// 			return false;
+// 		}
+// 	}
+// }
+
 void setup()
 {
 	pinMode(LED_PIN, OUTPUT);
@@ -632,43 +834,51 @@ void setup()
 							 // SIM_activate(true);
 							 // delay(200);
 							 // // SerialAT.begin(115200, SERIAL_8N1, 39, 40); // Adjust baud rate and pins as needed
-	en_12v(true);
-	en_5v(true);
-	enable_sens(1);
-	enable_sens(3);
-	delay(500);
-	RS485_2_activate(true);
+	// en_12v(true);
+	// en_5v(true);
+	// enable_sens(1);
+	// enable_sens(3);
+	// delay(500);
+	// RS485_2_activate(true);
 	// delay(200);
 	// connect();
 
 	// action();
 	// Serial.println("sleep");
 	// sleep(15);
+	if (searchSensors_1())
+	{
+		Serial.println("da");
+	}
+	else
+	{
+		Serial.println("no");
+	}
 }
 
 void loop()
 {
-	  byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
-	// byte req[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0xff};
-	// Отправка
-	//   digitalWrite(REDE, HIGH);
-	//   rs485Serial.write(req, sizeof(req));
-	//   rs485Serial.flush();
-	//   digitalWrite(REDE, LOW);
-	sendRS485Data(req, 8);
-	Serial.println("sended");
-		// Прием
-		delay(1000);
-	if (rs485Serial.available())
-	{
-		Serial.print("Ответ: ");
-		while (rs485Serial.available())
-		{
-			Serial.printf("%02X ", rs485Serial.read());
-		}
-		Serial.println();
-	}
-	delay(2000);
+	// byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
+	// // byte req[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0xff};
+	// // Отправка
+	// //   digitalWrite(REDE, HIGH);
+	// //   rs485Serial.write(req, sizeof(req));
+	// //   rs485Serial.flush();
+	// //   digitalWrite(REDE, LOW);
+	// sendRS485Data(req, 8);
+	// Serial.println("sended");
+	// // Прием
+	// delay(1000);
+	// if (rs485Serial.available())
+	// {
+	// 	Serial.print("Ответ: ");
+	// 	while (rs485Serial.available())
+	// 	{
+	// 		Serial.printf("%02X ", rs485Serial.read());
+	// 	}
+	// 	Serial.println();
+	// }
+	// delay(2000);
 }
 
 // void loop()
