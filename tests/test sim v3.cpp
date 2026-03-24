@@ -8,10 +8,10 @@
 
 #include <TinyGsmClient.h>
 #include <StreamDebugger.h>
-HardwareSerial SerialAT(1);				   // Using Serial1 on ESP32
+HardwareSerial SerialAT(1); // Using Serial1 on ESP32
 // StreamDebugger debugger(SerialAT, Serial); // Пересылает всё в Serial
 
-#include "defenitions.h"
+#include "defenitions3.h"
 const int ID = 8;
 float Battery = 146;
 
@@ -22,9 +22,9 @@ Preferences preferences;
 
 // Modem power pin (if applicable, adjust for your board)
 const int MODEM_PWR_PIN = 40;
-const char *apn = "internet"; // Access Point Name
-const char *gprsUser = "";	  // GPRS username (if required)
-const char *gprsPass = "";	  // GPRS password (if required)
+const char *apn = "internet.mts.ru"; // Access Point Name
+const char *gprsUser = "mts";		 // GPRS username (if required)
+const char *gprsPass = "mts";		 // GPRS password (if required)
 
 // Server details for data transmission
 const char *server = "example.com";
@@ -86,7 +86,6 @@ bool loadArrayFromFlash()
 		return false;
 	}
 }
-
 void printParameters(struct Configuration configuration)
 {
 	Serial.println("----------------------------------------");
@@ -445,7 +444,7 @@ void SIM_activate(bool act)
 {
 	if (act)
 	{
-		SerialAT.begin(115200, SERIAL_8N1, 17, 16, false); // Adjust baud rate and pins as needed
+		SerialAT.begin(9600, SERIAL_8N1, SIMRX, SIMTX, false); // Adjust baud rate and pins as needed
 		Serial.println("SIM activate");
 	}
 	else
@@ -461,17 +460,28 @@ bool connect()
 	Serial.print(F("Modem Info: "));
 	String modemInfo = modem.getModemModel();
 	Serial.println(modemInfo);
+	// modem.sendAT(GF("E0"));
 	// Wait for network registration
-	modem.sendAT(GF("+CGATT=1"));
-	delay(100);
-	int i = modem.waitResponse();
-	Serial.println(i);
+	// modem.sendAT(GF("AT+CBC"));
+	// delay(100);
+	// int i = ;
+	delay(5000);
+
+	// Serial.println(modem.getIMEI());
+	// Serial.prntln(modem.factoryDefault());
+	// AT+CPIN?
+	// modem.sendAT(GF("+COPS?"));
+	//
+	// Serial.println(modem.waitResponse());
+
+	delay(5000);
+
 	Serial.println(F("Waiting for network..."));
 	for (int i = 1; i < 4; i++)
 	{
 		Serial.print("try ");
 		Serial.print(i);
-		if (modem.waitForNetwork(15000U ))
+		if (modem.waitForNetwork(30000U, true))
 		{
 			Serial.println(F(" Network connected!"));
 			break;
@@ -497,15 +507,15 @@ bool connect()
 
 	delay(5000); // Дайте модему время получить время от сети
 
-	int y = 0, m = 0, d = 0, h = 0, min = 0, s = 0;
-	if (modem.getGsmLocationTime(&y, &m, &d, &h, &min, &s))
-	{
-		Serial.printf("%04d-%02d-%02d %02d:%02d:%02d\n", y, m, d, h, min, s);
-	}
-	else
-	{
-		Serial.println("Время не получено");
-	}
+	// int y = 0, m = 0, d = 0, h = 0, min = 0, s = 0;
+	// if (modem.getGsmLocationTime(&y, &m, &d, &h, &min, &s))
+	// {
+	// 	Serial.printf("%04d-%02d-%02d %02d:%02d:%02d\n", y, m, d, h, min, s);
+	// }
+	// else
+	// {
+	// 	Serial.println("Время не получено");
+	// }
 
 	// Establish GPRS connection
 	Serial.println("Connecting to GPRS...");
@@ -542,47 +552,73 @@ bool connect()
 			}
 		}
 	}
-
+	Serial.print("signal:	");
+	Serial.println(modem.getSignalQuality());
+	Serial.print("ip:	");
+	Serial.println(modem.getLocalIP());
+	delay(10000);
 	return true;
 }
 
 // лючения к сайту (только HTTP!)
+
 bool httpRequest(const char *host, uint16_t port, const char *path)
 {
-	Serial.printf("Connecting to %s:%d...\n", host, port);
+	Serial.printf("\n=== HTTP Request ===\n");
+	Serial.printf("Target: %s:%d%s\n", host, port, path);
 
-	// 1. TCP подключение через клиент
-	if (!client.connect(host, port))
-	{
-		Serial.println("Connection failed");
+	// 1. Подключение
+	if (!client.connect(host, port)) {
+		Serial.println("❌ Connection failed");
 		return false;
 	}
-	Serial.println("Connected!");
+	Serial.println("✅ Connected");
 
-	// 2. Формируем HTTP-запрос
+	// 2. Отправка запроса
 	client.print(String("GET ") + path + " HTTP/1.1\r\n");
 	client.print(String("Host: ") + host + "\r\n");
 	client.println("Connection: close\r\n");
+	Serial.println("📤 Request sent");
 
-	// 3. Ждём и читаем ответ (таймаут 5 сек)
-	unsigned long timeout = millis();
-	while (client.connected() && millis() - timeout < 5000)
-	{
-		while (client.available())
-		{
+	// 3. Ждём начала ответа (таймаут 3 сек)
+	unsigned long start = millis();
+	while (!client.available() && millis() - start < 3000) {
+		delay(10);
+	}
+
+	if (!client.available()) {
+		Serial.println("❌ No response received");
+		client.stop();
+		return false;
+	}
+
+	// 4. Чтение и вывод ответа
+	Serial.println("\n📥 Response:");
+	Serial.println("---[BEGIN]---");
+	
+	int totalBytes = 0;
+	while (client.connected() || client.available()) {
+		if (client.available()) {
 			String line = client.readStringUntil('\n');
-			Serial.println(line);
-			// Проверка на успех
-			if (line.indexOf("200 OK") >= 0)
-			{
-				Serial.println("✓ HTTP 200 OK");
+			Serial.print(line);  // \n уже есть в строке
+			totalBytes += line.length();
+			
+			// Подсветка статуса
+			if (line.indexOf("200 OK") >= 0) {
+				Serial.println("\n✓ HTTP 200 OK detected");
 			}
 		}
+		delay(5); // даём буферу наполниться
 	}
+	
+	Serial.println("---[END]---");
+	Serial.printf("Total received: %d bytes\n", totalBytes);
 
 	client.stop();
 	return true;
 }
+
+
 
 void sendRS485Data(byte *data, int len)
 {
@@ -595,50 +631,31 @@ void sendRS485Data(byte *data, int len)
 
 bool getSOILdata()
 {
-
 	byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
-
 	int lenreq = 8;
 	int lenresponse = 32;
 	byte response[lenresponse] = {};
-
 	printHEX(req, lenreq);
 	sendRS485Data(req, lenreq);
 	delay(500);
 	rs485Serial.readBytes(response, lenresponse);
 	rs485Serial.flush();
-
 	Serial.println("	response:");
 	printHEX(response, lenresponse);
 }
-void enable_12v(bool act)
+
+void enable_power(bool act)
 {
 	if (act)
 	{
 		// pinMode(E12V, OUTPUT);
-		digitalWrite(E12V, HIGH);
-		delay(200);
-		Serial.println("12v ON");
-	}
-	else
-	{
-		digitalWrite(E12V, LOW);
-		delay(200);
-		Serial.println("12v OFF");
-	}
-}
-void enable_5v(bool act)
-{
-	if (act)
-	{
-		// pinMode(E12V, OUTPUT);
-		digitalWrite(E5V, HIGH);
+		digitalWrite(EP, HIGH);
 		delay(200);
 		Serial.println("5v ON");
 	}
 	else
 	{
-		digitalWrite(E5V, LOW);
+		digitalWrite(EP, LOW);
 		delay(200);
 		Serial.println("5v OFF");
 	}
@@ -747,16 +764,15 @@ void deact()
 	enable_sens(0);
 	RS485_1_activate(false);
 	RS485_2_activate(false);
-	enable_12v(false);
-	enable_5v(false);
+	enable_power(false);
+	// enable_5v(false);
 }
 
 bool searchSensors_1()
 {
 	pinMode(LED_PIN, LOW);
 	int port = 1;
-	enable_12v(true);
-	enable_5v(true);
+	enable_power(true);
 	enable_sens(port);
 	RS485_1_activate(true);
 
@@ -918,9 +934,7 @@ void setup()
 	pinMode(EG2, OUTPUT);
 	pinMode(EG3, OUTPUT);
 	pinMode(EG4, OUTPUT);
-	pinMode(E12V, OUTPUT);
-	pinMode(E5V, OUTPUT);
-	pinMode(REDE, OUTPUT);
+	pinMode(EP, OUTPUT);
 	pinMode(ESIM, OUTPUT);
 
 	Serial.begin(115200); // монитор порта
@@ -933,8 +947,11 @@ void setup()
 	}
 
 	delay(200);
-	enable_5v(true);
+	enable_power(true);
 	enable_sim(true);
+	// enable_sens(1);
+	// enable_sens(4);
+
 	delay(2000);
 	Serial.println("hello");
 	Serial.println("hello");
@@ -944,19 +961,14 @@ void setup()
 
 	if (connect())
 	{
-		Serial.println("conect");
-		httpRequest("httpbin.org", 80, "/ip");
-		delay(2000);
+		// Зарубежный (HTTP)
+		// httpRequest("httpbin.org", 80, "/ip");
+		// delay(2000);
 
-		// Российский (Ya.ru перенаправляет, но отдает заголовок)
-		httpRequest("ya.ru", 80, "/");
+		// httpRequest("158.160.78.215", 80, "/");
+		// delay(2000);
+		httpRequest("93.183.71.44", 80, "/");
 		delay(2000);
-
-		// VK.com:
-		// ❌ http://vk.com — редирект на HTTPS
-		// ❌ https://vk.com — SIM800 не поддерживает нативно
-		// ✓ Тестовый API (может работать по HTTP):
-		httpRequest("google.com", 80,"/");
 	}
 	else
 	{
