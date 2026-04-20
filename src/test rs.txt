@@ -172,8 +172,16 @@ void printModuleInformation(struct ModuleInformation moduleInformation)
 	Serial.println("----------------------------------------");
 }
 
+void rsa()
+{
+	rs485Serial.begin(9600, SERIAL_8N1, RS2TX, RS2RX);
+	Serial.println("RS2 activataaaaaaaaae");
+}
+
 void RS485_activate(int rs)
 {
+	digitalWrite(REDE, LOW);
+	delay(200);
 	switch (rs)
 	{
 	case 1:
@@ -189,8 +197,9 @@ void RS485_activate(int rs)
 		Serial.println("RS DEactivate");
 		break;
 	}
-	digitalWrite(REDE, LOW);
-	delay(200);
+	delay(2000);
+
+	Serial.println("ok");
 }
 
 // void LORA_config_get()
@@ -233,7 +242,6 @@ void RS485_activate(int rs)
 void addCRC(byte req[], int dataLength, byte request[])
 {
 	uint16_t crc = 0xFFFF;
-
 	for (int pos = 0; pos < dataLength; pos++)
 	{
 		crc ^= (uint16_t)req[pos];
@@ -250,13 +258,11 @@ void addCRC(byte req[], int dataLength, byte request[])
 			}
 		}
 	}
-
 	// Копируем исходные данные в результат
 	for (int i = 0; i < dataLength; i++)
 	{
 		request[i] = req[i];
 	}
-
 	// Добавляем CRC в конец (младший байт первый)
 	request[dataLength] = crc & 0xFF;			 // LSB
 	request[dataLength + 1] = (crc >> 8) & 0xFF; // MSB
@@ -265,7 +271,6 @@ void addCRC(byte req[], int dataLength, byte request[])
 void outCRC(byte req[], int dataLength, byte outcrc[])
 {
 	uint16_t crc = 0xFFFF;
-
 	for (int pos = 0; pos < dataLength; pos++)
 	{
 		crc ^= (uint16_t)req[pos];
@@ -416,10 +421,6 @@ void byteArrayToHexString(const byte *byteArray, int length, String str)
 // 	delay(5000);
 // }
 
-// void action()
-// {
-// }
-
 // void sleep(int time)
 // {
 // 	esp_sleep_enable_timer_wakeup(time * uS_TO_S_FACTOR);
@@ -546,10 +547,12 @@ void byteArrayToHexString(const byte *byteArray, int length, String str)
 
 void sendRS485Data(byte *data, int len)
 {
+	rs485Serial.flush();
 	digitalWrite(REDE, HIGH);
-	delay(200);
+	delayMicroseconds(10);
 	rs485Serial.write(data, len);
 	rs485Serial.flush();
+	delayMicroseconds(50); // Дать уйти стоп-биту
 	digitalWrite(REDE, LOW);
 }
 
@@ -574,13 +577,13 @@ void enable_power(bool act)
 	{
 		// pinMode(E12V, OUTPUT);
 		digitalWrite(EP, HIGH);
-		delay(200);
+		delay(500);
 		Serial.println("5v ON");
 	}
 	else
 	{
 		digitalWrite(EP, LOW);
-		delay(200);
+		delay(500);
 		Serial.println("5v OFF");
 	}
 }
@@ -623,13 +626,13 @@ void enable_sim(bool act)
 	if (act)
 	{
 		digitalWrite(ESIM, HIGH);
-		delay(200);
+		delay(500);
 		Serial.println("SIM ON");
 	}
 	else
 	{
 		digitalWrite(ESIM, LOW);
-		delay(200);
+		delay(500);
 		Serial.println("SIM OFF");
 	}
 }
@@ -694,7 +697,7 @@ void deact()
 bool searchSensors(int port)
 {
 	// pinMode(LED_PIN, HIGH);
-	// enable_power(true);
+	enable_power(true);
 	Serial.print("			Search sensors, port	");
 	Serial.println(port);
 	enable_sens(port);
@@ -734,20 +737,21 @@ bool searchSensors(int port)
 	rs485Serial.flush();
 	Serial.println("	responses:");
 	printHEX(response, lenresponse);
-	// if (response[0] == 0x00)
-	// {
-	// 	for (int i = 0; i < 40; i++)
-	// 	{
-	// 		delay(500);
-	// 		rs485Serial.readBytes(response, lenresponse);
-	// 		rs485Serial.flush();
-	// 		printHEX(response, lenresponse);
-	// 		if (response[0] != 0)
-	// 		{
-	// 			break;
-	// 		}
-	// 	}
-	// }
+	Serial.println("	wait meteo:");
+	if (response[0] == 0x00)
+	{
+		for (int i = 0; i < 40; i++)
+		{
+			delay(500);
+			rs485Serial.readBytes(response, lenresponse);
+			rs485Serial.flush();
+			printHEX(response, lenresponse);
+			if (response[0] != 0)
+			{
+				break;
+			}
+		}
+	}
 
 	Serial.print((int)response[0]);
 	Serial.println("		FOUND		!!!");
@@ -768,6 +772,8 @@ bool searchSensors(int port)
 	saveArrayToFlash();
 	enable_sens(0);
 	RS485_activate(0);
+	enable_power(0);
+
 	if (response[0] != 0x00)
 	{
 		return true;
@@ -788,6 +794,7 @@ void setup()
 	pinMode(EP, OUTPUT);
 	pinMode(ESIM, OUTPUT);
 	pinMode(REDE, OUTPUT);
+	digitalWrite(REDE, LOW);
 
 	Serial.begin(115200); // монитор порта
 	for (int i = 0; i < 40; i++)
@@ -801,10 +808,11 @@ void setup()
 	delay(200);
 	enable_power(true);
 	// enable_sim(true);
-	// enable_sens(1);
+	// enable_sens(4);/
 	// enable_sens(4);
+	// RS485_activate(2);
 
-	delay(2000);
+	delay(5000);
 	Serial.println("hello");
 	Serial.println("hello");
 	// SIM_activate(true);
@@ -823,7 +831,6 @@ void setup()
 	// {
 	// 	Serial.println("NO conect");
 	// }
-
 	if (searchSensors(1))
 	{
 		Serial.println("			1 da");
@@ -836,6 +843,14 @@ void setup()
 
 void loop()
 {
+
+
+	// byte req[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0xFF};
+	// int lenreq = 8;
+	// printHEX(req, lenreq);
+	// sendRS485Data(req, lenreq);
+	// delay(3000);
+
 	// byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
 	// // byte req[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0xff};
 	// // Отправка
