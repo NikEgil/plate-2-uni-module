@@ -1,4 +1,6 @@
 {
     "terminal.integrated.defaultLocation": "view",
-    "terminal.integrated.defaultProfile.windows": "Windows PowerShell"
+    "terminal.integrated.defaultProfile.windows": "Windows PowerShell",
+    "C_Cpp.formatting": "clangFormat",
+    "editor.formatOnSave": true
 }

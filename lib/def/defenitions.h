@@ -24,8 +24,14 @@ constexpr int REDE = 11;
 constexpr int ESIM = 38;
 constexpr int SIMRX = 17;
 constexpr int SIMTX = 16;
-
+constexpr int SIM_BAUD = 9600;
 constexpr int ADC = 10;
+
+constexpr int BUT1 = 8;
+constexpr int BUT2 = 9;
+constexpr int SW1_PIN =36;
+constexpr int SW2_PIN= 35;
+
 // constexpr int RSA 35
 // constexpr int RSA 11
 
@@ -33,16 +39,18 @@ constexpr int ADC = 10;
 // const gpio_num_t button2 = GPIO_NUM_12;
 
 constexpr int MODEM_PWR_PIN = 40;
-extern const char* apn;     // Access Point Name
-extern const char* gprsUser; // GPRS username (if required)
-extern const char* gprsPass; // GPRS password (if required)
-extern const char* broker;
- constexpr int ID = 99999999;
-extern const char* IDchar;
-extern const char* pass;
+extern const char *apn;      // Access Point Name
+extern const char *gprsUser; // GPRS username (if required)
+extern const char *gprsPass; // GPRS password (if required)
+extern const char *broker;
+extern const int ID;
+extern const char *IDchar;
+extern const char *pass;
 
-struct CalPoint
-{
+extern const int sensReg[];
+extern const int sensTime[];
+
+struct CalPoint {
     int raw;    // analogReadRaw()
     float vbat; // Напряжение батареи (мультиметр)
 };
