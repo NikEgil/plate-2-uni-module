@@ -172,9 +172,9 @@ bool connect(const char *apn, const char *user, const char *pass) {
         }
         delay(200);
     }
-
+    delay(200);
     // Инфо для отладки
-    Serial.printf("Signal: %d\n", getSignalQuality() * 100 / 31);
+    Serial.printf("Signal: %d\n", getSignalQuality());
     Serial.printf("IP: %s\n", getLocalIP().c_str());
 
     return true;
@@ -190,7 +190,9 @@ void disconnect() {
 bool isConnection() { return isGprsConnected && isActive; }
 bool hasNetwork() { return isActive && modem->isNetworkConnected(); }
 
-int getSignalQuality() { return isActive ? modem->getSignalQuality() : -1; }
+int getSignalQuality() {
+    return isActive ? modem->getSignalQuality() * 100 / 31 : -1;
+}
 
 String getLocalIP() { return isActive ? modem->getLocalIP() : ""; }
 

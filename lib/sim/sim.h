@@ -23,7 +23,6 @@ bool hasNetwork();
 int getSignalQuality();
 String getLocalIP();
 String getModemInfo();
-
 // Прямой доступ к клиенту (для HTTP/MQTT)
 void *getClient(); // возвращает TinyGsmClient*
 

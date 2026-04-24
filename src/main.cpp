@@ -9,9 +9,9 @@
 
 int Battery;
 
-byte tableSens[5] = {};
+byte tableSens[5] = {0x00, 0x08, 0x00, 0x00, 0x01};
 RTC_DATA_ATTR int state = 0;
-
+RTC_DATA_ATTR int rssi1 = 0;
 // #define rs485Serial Serial1
 // LoRa_E220 e220ttl(&MySerial, 15, 21, 19); //  RXTX AUX M0 M1
 
@@ -308,7 +308,28 @@ bool searche_multisens() {
     }
 }
 
-void measure(int port, uint8_t *buf) {
+void polling(int sens, int lenreg, uint8_t *buf) {
+    byte req[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
+    req[0] = (byte)sens;
+    req[5] = (byte)lenreg;
+
+    byte request[8];
+    int lenresponse = 5 + lenreg * 2;
+    byte response[lenresponse];
+
+    addCRC(req, 6, request);
+    Serial.println("        reQuest:");
+    printHEX(request, 8);
+
+    RsModbus::sendData(request, 8);
+    delay(500);
+    RsModbus::receiveData(response, lenresponse, 10);
+    Serial.println("        reSpons:");
+    memcpy(buf, response, lenresponse);
+    printHEX(buf, lenresponse);
+}
+
+void measure(int port) {
     digitalWrite(LED_PIN, HIGH);
     enable_power(true);
     Serial.printf("			Measure, port	%i\n", port);
@@ -323,8 +344,6 @@ void measure(int port, uint8_t *buf) {
         Serial.println("Channel 2 activated");
     }
 
-    byte req[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
-    req[0] = tableSens[port];
     int sens = (int)tableSens[port];
     int lenreg = sensReg[sens];
 
@@ -332,25 +351,28 @@ void measure(int port, uint8_t *buf) {
         "tableSens number: %i,  sensReg number:	%i,  sensTime wait:	%i\n",
         sens, lenreg, sensTime[sens]);
 
+    if (sens == 0) {
+        Serial.println("");
+        return;
+    }
     delay(sensTime[sens] * 1000);
-    req[5] = (byte)lenreg;
-    byte request[8];
-    int lenresponse = 5 + lenreg * 2;
-    byte response[lenresponse];
-
-    addCRC(req, 6, request);
-    Serial.println("request:");
-    printHEX(request, 8);
-
-    RsModbus::sendData(request, 8);
-    delay(500);
-
-    // Ждём ответ 150 мс (для Modbus обычно хватает 50-100 мс)
-    RsModbus::receiveData(response, lenresponse, 10);
-    Serial.println("	responses:");
-    printHEX(response, lenresponse);
-
-    buf = response;
+    if (sens == 1) {
+        int s = 0;
+        int l = 5 + lenreg * 2;
+        byte all[l * 5];
+        memset(all, 0x00, l * 5);
+        byte response[l];
+        for (int i = 0; i < 5; i++) {
+            memset(response, 0x00, l);
+            polling(i + 1, lenreg, response);
+            memcpy(all + i * l, response, l);
+        }
+        printHEX(all, l * 5);
+    } else {
+        byte response[5 + lenreg * 2];
+        polling(sens, lenreg, response);
+    }
+    Serial.println("measured");
 }
 
 bool searchSensors(int port) {
@@ -390,17 +412,16 @@ bool searchSensors(int port) {
     size_t lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
     Serial.println("	responses:");
     printHEX(response, lenresponse);
-    if (response[0] == 0x00) {
-        Serial.println("	wait meteo:");
-        for (int i = 0; i < 40; i++) {
-            delay(500);
-            lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
-            printHEX(response, lenresponse);
-            if (response[0] != 0) {
-                break;
-            }
-        }
-    }
+    // if (response[0] == 0x00) {
+    //     Serial.println("	wait meteo:");
+    //     for (int i = 0; i < 40; i++) {
+    //         delay(500);
+    //         lenresponse = RsModbus::receiveData(response, sizeof(response),
+    //         10); printHEX(response, lenresponse); if (response[0] != 0) {
+    //             break;
+    //         }
+    //     }
+    // }
     Serial.printf("%i		FOUND		!!!\n", (int)response[0]);
     if (response[0] == 0x24) {
         Serial.println("meteostation detected");
@@ -434,6 +455,7 @@ bool sim_activate(bool act) {
         SimModule::activate(true);
         if (SimModule::connect(apn, gprsUser, gprsPass)) {
             Serial.println("	sim connected");
+            rssi1 = SimModule::getSignalQuality();
             return true;
         } else {
             return false;
@@ -469,16 +491,17 @@ void timeee() {
 // Логика для кнопки 1
 
 void dataPrepare() {
-    byte data[6];
-    getPackedTimeBytes(data);
+    byte data[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    if (isTime()) {
+        getPackedTimeBytes(data);
+    }
     uint8_t packet[200];
-    int rssi = 0;
-    size_t len = preparePacket(packet, ID, Battery, data, rssi, 0);
+    size_t len = preparePacket(packet, ID, Battery, data, rssi1, 0);
     printHEX(packet, 200);
 }
 
 void doAction1() {
-    Serial.println(">>> Action 1 (GPIO 39)");
+    Serial.println(">>> Action 1 (GPIO 8)");
     blink(1, 500);
     blink(1, 250);
 
@@ -496,7 +519,7 @@ void doAction1() {
 }
 
 void doAction2() {
-    Serial.println(">>> Action 2 (GPIO 40)");
+    Serial.println(">>> Action 2 (GPIO 9)");
     blink(1, 500);
     blink(2, 250);
 
@@ -533,10 +556,11 @@ void setup() {
         doAction2();
         break;
     default:
-        dataPrepare();
-        // measure(1);
-        // measure(4);
 
+        //    searchSensors(1);
+        measure(1);
+        measure(4);
+        blink(10, 100);
         break;
     }
 

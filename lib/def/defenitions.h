@@ -49,7 +49,7 @@ extern const char *pass;
 
 extern const int sensReg[];
 extern const int sensTime[];
-
+#define SWITCH_DEBOUNCE_MS 20
 struct CalPoint {
     int raw;    // analogReadRaw()
     float vbat; // Напряжение батареи (мультиметр)

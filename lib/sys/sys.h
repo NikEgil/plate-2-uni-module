@@ -38,5 +38,7 @@ void printCurrentTime();              // DEC: YYYY-MM-DD HH:MM:SS
 uint64_t getPackedTimeHex();          // ГГММДДЧЧММСС → uint64_t
 void getPackedTimeBytes(byte buf[6]); // Для отправки в RS485
 
-size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery,byte date[6],
+size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[6],
                      uint8_t signal1, uint8_t signal2);
+
+bool isTime();
