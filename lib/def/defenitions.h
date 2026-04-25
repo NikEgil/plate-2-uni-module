@@ -49,6 +49,7 @@ extern const char *pass;
 
 extern const int sensReg[];
 extern const int sensTime[];
+extern const int activeport[];
 #define SWITCH_DEBOUNCE_MS 20
 struct CalPoint {
     int raw;    // analogReadRaw()

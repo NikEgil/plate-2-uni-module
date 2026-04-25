@@ -42,3 +42,4 @@ size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[6],
                      uint8_t signal1, uint8_t signal2);
 
 bool isTime();
+bool checkCRC(byte response[], int lenresponse);

@@ -1,8 +1,10 @@
+#include "FlashStack.h"
 #include <Arduino.h>
 #include <defenitions.h>
 #include <rs.h>
 #include <sim.h>
 #include <sys.h>
+FlashStack stack;
 
 #include <PubSubClient.h>
 // Структура для хранения калибровочных данных
@@ -11,7 +13,7 @@ int Battery;
 
 byte tableSens[5] = {0x00, 0x08, 0x00, 0x00, 0x01};
 RTC_DATA_ATTR int state = 0;
-RTC_DATA_ATTR int rssi1 = 0;
+int rssi1 = 0;
 // #define rs485Serial Serial1
 // LoRa_E220 e220ttl(&MySerial, 15, 21, 19); //  RXTX AUX M0 M1
 
@@ -308,34 +310,81 @@ bool searche_multisens() {
     }
 }
 
-void polling(int sens, int lenreg, uint8_t *buf) {
+// void polling(int sens, int lenreg, uint8_t *buf) {
+//     Serial.printf("tableSens number: %i,  sensReg number:	%i\n", sens,
+//                   lenreg);
+//     byte req[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
+//     req[0] = (byte)sens;
+//     req[5] = (byte)lenreg;
+//     byte request[8];
+//     int lenresponse = 5 + lenreg * 2;
+//     byte response[lenresponse];
+//     addCRC(req, 6, request);
+//     Serial.println("        reQuest:");
+//     printHEX(request, 8);
+//     RsModbus::sendData(request, 8);
+//     delay(500);
+//     RsModbus::receiveData(response, lenresponse, 10);
+//     Serial.println("        reSpons:");
+//     printHEX(response, lenresponse);
+//     memcpy(buf, response, lenresponse);
+// }
+
+int polling(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
+    if (!outBuf || outBufSize < 5)
+        return -1;
+
+    // Формируем запрос...
     byte req[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
     req[0] = (byte)sens;
     req[5] = (byte)lenreg;
 
     byte request[8];
-    int lenresponse = 5 + lenreg * 2;
-    byte response[lenresponse];
-
     addCRC(req, 6, request);
-    Serial.println("        reQuest:");
-    printHEX(request, 8);
 
     RsModbus::sendData(request, 8);
-    delay(500);
-    RsModbus::receiveData(response, lenresponse, 10);
-    Serial.println("        reSpons:");
-    memcpy(buf, response, lenresponse);
-    printHEX(buf, lenresponse);
+    delay(50);
+
+    // Приём: передаём внешний буфер и его размер
+    int received = RsModbus::receiveData(outBuf, outBufSize, 150);
+
+    if (received > 0) {
+        Serial.printf("  RX[%d]: ", received - 1);
+        printHEX(outBuf, received);
+    }
+    return received; // -1 = ошибка, >=0 = кол-во байт
 }
 
-void measure(int port) {
+int pollingMeteo(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
+    if (!outBuf || outBufSize < 5)
+        return -1;
+
+    // Приём: передаём внешний буфер и его размер
+    int received = RsModbus::receiveData(outBuf, outBufSize, 150);
+
+    if (received > 0) {
+        Serial.printf("  RX[%d]: ", received - 1);
+        printHEX(outBuf, received);
+    }
+    return received; // -1 = ошибка, >=0 = кол-во байт
+}
+
+struct MeasureResult {
+    uint8_t *data; // Указатель на данные
+    size_t length; // Длина в байтах
+    bool valid;    // Флаг успеха (память выделена + опрос прошёл)
+};
+
+MeasureResult measure(int port) {
+    MeasureResult res = {nullptr, 0, false};
+
     digitalWrite(LED_PIN, HIGH);
     enable_power(true);
-    Serial.printf("			Measure, port	%i\n", port);
+    Serial.printf("Measure, port %i\n", port);
     enable_sens(port);
     delay(1000);
 
+    // Выбор канала
     if (port == 1) {
         RsModbus::setChannel(RsModbus::RS_CH1, true);
         Serial.println("Channel 1 activated");
@@ -347,33 +396,102 @@ void measure(int port) {
     int sens = (int)tableSens[port];
     int lenreg = sensReg[sens];
 
-    Serial.printf(
-        "tableSens number: %i,  sensReg number:	%i,  sensTime wait:	%i\n",
-        sens, lenreg, sensTime[sens]);
-
     if (sens == 0) {
-        Serial.println("");
-        return;
+        Serial.println("Sensor disabled");
+        goto cleanup;
     }
+
     delay(sensTime[sens] * 1000);
+
     if (sens == 1) {
-        int s = 0;
-        int l = 5 + lenreg * 2;
-        byte all[l * 5];
-        memset(all, 0x00, l * 5);
-        byte response[l];
-        for (int i = 0; i < 5; i++) {
-            memset(response, 0x00, l);
-            polling(i + 1, lenreg, response);
-            memcpy(all + i * l, response, l);
+        int singleLen = 5 + lenreg * 2;
+        res.length = singleLen * 5;
+
+        // Выделяем память в куче
+        res.data = (uint8_t *)malloc(res.length);
+        if (!res.data) {
+            Serial.println("❌ malloc failed (sens==1)");
+            goto cleanup;
         }
-        printHEX(all, l * 5);
+        memset(res.data, 0x00, res.length);
+
+        // Временный буфер для polling (чуть больше ожидаемого)
+        byte tempBuf[singleLen + 16];
+
+        for (int i = 0; i < 5; i++) {
+            int received = polling(i + 1, lenreg, tempBuf, sizeof(tempBuf));
+            if (received == singleLen && checkCRC(tempBuf, received)) {
+                memcpy(res.data + i * singleLen, tempBuf, singleLen);
+            } else {
+                Serial.printf("⚠️ Addr %d failed\n", i + 1);
+            }
+        }
+        printHEX(res.data, res.length);
+
     } else {
-        byte response[5 + lenreg * 2];
-        polling(sens, lenreg, response);
+        res.length = 5 + lenreg * 2;
+        res.data = (uint8_t *)malloc(res.length);
+        if (!res.data) {
+            Serial.println("❌ malloc failed (single)");
+            goto cleanup;
+        }
+
+        int received = polling(sens, lenreg, res.data, res.length);
+        if (received == (int)res.length && checkCRC(res.data, received)) {
+            printHEX(res.data, received);
+        } else {
+            Serial.println("⚠️ Single sensor failed");
+        }
     }
-    Serial.println("measured");
+
+    res.valid = true; // Данные собраны (даже если часть ячеек нулевая)
+
+cleanup:
+    enable_sens(0);
+    Serial.println("✅ Measured");
+    digitalWrite(LED_PIN, LOW);
+    return res;
 }
+
+// void measure(int port) {
+//     digitalWrite(LED_PIN, HIGH);
+//     enable_power(true);
+//     Serial.printf("			Measure, port	%i\n", port);
+//     enable_sens(port);
+//     delay(1000);
+//     if (port == 1) {
+//         RsModbus::setChannel(RsModbus::RS_CH1, true);
+//         Serial.println("Channel 1 activated");
+//     } else {
+//         RsModbus::setChannel(RsModbus::RS_CH2, true);
+//         Serial.println("Channel 2 activated");
+//     }
+//     int sens = (int)tableSens[port];
+//     int lenreg = sensReg[sens];
+//     if (sens == 0) {
+//         Serial.println("");
+//         return;
+//     }
+//     delay(sensTime[sens] * 1000);
+//     if (sens == 1) {
+//         int s = 0;
+//         int l = 5 + lenreg * 2;
+//         byte all[l * 5];
+//         memset(all, 0x00, l * 5);
+//         byte response[l];
+//         for (int i = 0; i < 5; i++) {
+//             memset(response, 0x00, l);
+//             polling(i + 1, lenreg, response);
+//             if (checkCRC(response,l))
+//             {memcpy(all + i * l, response, l);}
+//         }
+//         printHEX(all, l * 5);
+//     } else {
+//         byte response[5 + lenreg * 2];
+//         polling(sens, lenreg, response);
+//     }
+//     Serial.println("measured");
+// }
 
 bool searchSensors(int port) {
     digitalWrite(LED_PIN, HIGH);
@@ -483,22 +601,16 @@ void getNetTime() {
     printCurrentTime();
 }
 
-void timeee() {
-    byte buf[6];
-    getPackedTimeBytes(buf);
-    printHEX(buf, 6);
-}
-// Логика для кнопки 1
-
-void dataPrepare() {
-    byte data[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    if (isTime()) {
-        getPackedTimeBytes(data);
-    }
-    uint8_t packet[200];
-    size_t len = preparePacket(packet, ID, Battery, data, rssi1, 0);
-    printHEX(packet, 200);
-}
+// void dataPrepare() {
+//     byte data[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+//     if (isTime()) {
+//         getPackedTimeBytes(data);
+//     }
+//     uint8_t packet[200];
+//     size_t len = preparePacket(packet, ID, Battery, data, rssi1, 0);
+//     printHEX(packet, 200);
+// }
+uint8_t g_packet[198];
 
 void doAction1() {
     Serial.println(">>> Action 1 (GPIO 8)");
@@ -523,9 +635,107 @@ void doAction2() {
     blink(1, 500);
     blink(2, 250);
 
-    searchSensors(1);
-    searchSensors(4);
-    // Логика для кнопки 2
+    // searchSensors(1);
+    // searchSensors(4);
+    int l = stack.count();
+    for (int i = 0; i < l; i++) {
+        uint8_t packet[198];
+
+        if (stack.pop(packet)) {
+            Serial.printf("   ✅ Popped packet #%d\n", i);
+            printHEX(packet, (int)packet[0]);
+            Serial.printf("      Remaining: %d records\n", stack.count());
+        } else {
+            Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n", i);
+        }
+    }
+}
+void dataPrepare() {
+
+    byte dateBytes[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    if (isTime()) {
+        getPackedTimeBytes(dateBytes);
+    }
+    uint8_t *packet = g_packet;
+    memset(packet, 0, sizeof(g_packet));
+    // 1. Заполняем заголовок и базовые поля
+    size_t len = preparePacket(packet, ID, Battery, dateBytes, rssi1, 0);
+
+    // 2. Получаем данные измерений (предполагаем, что measure() возвращает
+    // MeasureResult)
+    MeasureResult mRes;
+    
+    for (int port = 0; port < 2; port++) {
+        mRes = measure(activeport[port]); // или другой порт
+        Serial.printf("Port %d: valid=%d, data=%p, len=%d\n", activeport[port],
+                      mRes.valid, mRes.data, mRes.length);
+
+        if (mRes.valid && mRes.data != nullptr && mRes.length > 0) {
+            size_t remaining = sizeof(packet) - len;
+            // Защита от выхода за границы 200-байтного буфера
+            if (mRes.length > remaining) {
+                Serial.printf(
+                    "⚠️ Measured data too large (%d > %d). Truncating.\n",
+                    mRes.length, remaining);
+                mRes.length = remaining;
+            }
+            packet[len] = activeport[port];
+            len += 1;
+
+            // Копируем измеренные данные СРАЗУ после заголовка
+            memcpy(packet + len, mRes.data, mRes.length);
+            len += mRes.length;
+        } else {
+            Serial.println("⚠️ No valid measured data to append");
+        }
+        if (mRes.valid && mRes.data != nullptr) {
+            free(mRes.data);
+            mRes.data = nullptr; // Защита от двойного free
+        }
+        yield();
+    }
+    // 3. Заполняем хвост нулями (если протокол требует фиксированные 200 байт)
+    if (len < 198) {
+        memset(packet + len, 0x00, 198 - len);
+    }
+
+    // 4. Вывод (для отладки печатаем только валидную часть, или все 200)
+    Serial.printf("Total packed length: %d bytes\n", len);
+    packet[0] = (byte)(len + 2);
+    addCRC(packet, len, packet);
+    printHEX(packet, len + 2);
+    yield();
+    if (stack.push(packet)) {
+        Serial.printf("   ✅ Pushed packet (count: %d)\n", stack.count());
+    } else {
+        Serial.printf("   ❌ Failed to push packet #%d (stack full?)\n",
+                      stack.count());
+    }
+    yield();
+}
+
+void cleanUpStack() {
+    if (!LittleFS.begin()) {
+        Serial.println("LittleFS mount failed");
+        return;
+    }
+
+    // 🔹 2. Удаляем старые файлы стека (выполнить ОДИН РАЗ после смены
+    // RECORD_SIZE)
+    if (LittleFS.exists("/stack.dat")) {
+        Serial.println("🗑 Removing old stack.dat (RECORD_SIZE changed)");
+        LittleFS.remove("/stack.dat");
+    }
+    if (LittleFS.exists("/stack.meta")) {
+        Serial.println("🗑 Removing old stack.meta");
+        LittleFS.remove("/stack.meta");
+    }
+    LittleFS.format();
+    // 🔹 3. Инициализируем стек с новыми настройками
+    if (stack.begin()) {
+        Serial.printf("✅ Stack initialized. RECORD_SIZE=%d, count=%d\n",
+                      RECORD_SIZE, stack.count());
+    }
 }
 
 void setup() {
@@ -546,8 +756,18 @@ void setup() {
         }
         saveArrayToFlash(tableSens);
     }
+
+    if (stack.begin()) {
+        Serial.printf("✅ Stack initialized. Current records: %d\n",
+                      stack.count());
+    } else {
+        Serial.println("❌ Failed to init FlashStack!");
+    }
+
+
     uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
+
     switch (wake_but) {
     case 1:
         doAction1();
@@ -557,14 +777,14 @@ void setup() {
         break;
     default:
 
-        //    searchSensors(1);
-        measure(1);
-        measure(4);
-        blink(10, 100);
+        // stack.clear();
+        dataPrepare();
+        // doAction2();
+        Serial.println("            complited");
         break;
     }
 
-    sleep(20);
+    sleep(10);
 
     // printCurrentTime();
 
@@ -581,4 +801,34 @@ void setup() {
     // }
 }
 
-void loop() {}
+void loop() {
+    // uint8_t packet[198];
+    // memset(packet, 0, 198);
+    // packet[0] = 0xAA;
+    // packet[1] = millis() & 0xFF;
+
+    // if (stack.push(packet)) {
+    //     Serial.printf("✅ Pushed (count: %d)\n", stack.count());
+    // } else {
+    //     Serial.println("❌ Push failed");
+    // }
+    // if (stack.count() == 3) {
+    //     int l = stack.count();
+    //     for (int i = 0; i < l; i++) {
+    //         uint8_t packet[198];
+
+    //         if (stack.pop(packet)) {
+    //             Serial.printf("   ✅ Popped packet #%d\n", i);
+    //             printHEX(packet, 200);
+    //             Serial.printf("      Remaining: %d records\n",
+    //             stack.count());
+    //         } else {
+    //             Serial.printf("   ❌ Failed to pop packet #%d (stack
+    //             empty?)\n",
+    //                           i);
+    //         }
+    //     }
+    //     stack.clear();
+    // }
+    // delay(2000); // Даем время на сброс WDT между итерациями
+}

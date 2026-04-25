@@ -158,6 +158,7 @@ bool loadArrayFromFlash(byte data[]) {
 
     if (len == 8) {
         Serial.println("Данные успешно загружены из памяти");
+        printHEX(data,5);
         return true;
     } else {
         Serial.println("Данные не найдены, инициализируем дефолтные значения");
@@ -286,7 +287,20 @@ void outCRC(byte req[], int dataLength, byte outcrc[]) {
     outcrc[0] = crc & 0xFF;        // LSB
     outcrc[1] = (crc >> 8) & 0xFF; // MSB
 }
-
+bool checkCRC(byte response[], int lenresponse){
+        byte crc[2] = {0x00, 0x00};
+    outCRC(response, lenresponse - 2, crc);
+    printHEX(crc, 2);
+    // Serial.println(response[lenresponse-2],HEX);
+    // Serial.println(response[lenresponse-1],HEX);
+    if (crc[1] == response[lenresponse-1] & crc[0] == response[lenresponse - 2]) {
+        Serial.println("CRC OK");
+        return true;
+    } else {
+        Serial.println("CRC BAD!");
+        return false;
+    }
+}
 // вывод текущего времени, если нет то false
 void printCurrentTime() {
     time_t now;
@@ -370,21 +384,21 @@ size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[],
     memset(buf, 0x00, 200);
     // 2. ID: 3 байта, старший байт первый (Big-Endian)
     // Пример: ID=0x123456 → [0x12][0x34][0x56]
-    buf[0] = (byte)(id >> 16) & 0xFF;
-    buf[1] = (byte)(id >> 8) & 0xFF;
-    buf[2] = (byte)(id) & 0xFF;
+    buf[1] = (byte)(id >> 16) & 0xFF;
+    buf[2] = (byte)(id >> 8) & 0xFF;
+    buf[3] = (byte)(id) & 0xFF;
     // 3. Заряд батареи: 1 байт (0-100%)
-    buf[3] = battery;
+    buf[4] = battery;
     // 4. Дата: 6 байт (YY, MM, DD, HH, MM, SS)
-    buf[4] = date[0];
-    buf[5] = date[1];
-    buf[6] = date[2];
-    buf[7] = date[3];
-    buf[8] = date[4];
-    buf[9] = date[5];
+    buf[5] = date[0];
+    buf[6] = date[1];
+    buf[7] = date[2];
+    buf[8] = date[3];
+    buf[9] = date[4];
+    buf[10] = date[5];
     // 5. Качество сигнала: 2 байта
-    buf[10] = signal1;
-    buf[11] = signal2;
+    buf[11] = signal1;
+    buf[12] = signal2;
     Serial.printf("ID   %i  - %#02x %#02x %#02x\n", ID, buf[0], buf[1], buf[2]);
     Serial.printf("bat  %i          - %#02x\n", battery, buf[3]);
     Serial.print("data  ");
@@ -396,5 +410,5 @@ size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[],
     Serial.printf("rssi2  %i  - %#02x\n", signal2, buf[11]);
     // Bytes 12-199 уже заполнены нулями через memset
 
-    return 12; // Возвращаем длину полезных данных
+    return 13; // Возвращаем длину полезных данных
 }
