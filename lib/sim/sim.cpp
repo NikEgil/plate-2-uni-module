@@ -1,23 +1,31 @@
-#include "sim.h"
-// TinyGSM требует определения модема ДО включения заголовка
+// 🔹 1. INCLUDES — дефайны ДО заголовков
 #define TINY_GSM_MODEM_SIM800
-#define TINY_GSM_DEBUG Serial // Отладка через USB-Serial
-#include <TinyGsmClient.h>
+#define TINY_GSM_DEBUG Serial
+#define MQTT_SOCKET_TIMEOUT 30 // Увеличенный таймаут сокета
+
+#include "sim.h"
+#include <PubSubClient.h>
+#include <SoftwareSerial.h>
+#include <TinyGsmClient.h> // ← TinyGsm определится только после #define выше
 #include <esp_task_wdt.h>
+
+// 🔹 2. NAMESPACE — оставляем как есть (указатели)
 namespace {
 SoftwareSerial *simSerial = nullptr;
 TinyGsm *modem = nullptr;
 TinyGsmClient *client = nullptr;
+PubSubClient *mqtt = nullptr;
 
 bool isActive = false;
 bool isGprsConnected = false;
-
 int simRxPin = -1;
 int simTxPin = -1;
 uint32_t simBaud = 0;
 } // namespace
 
 namespace SimModule {
+
+// 🔹 3. begin() — исправляем инициализацию объектов
 void begin(int rxPin, int txPin, uint32_t baud) {
     if (rxPin == -1)
         rxPin = SIMRX;
@@ -25,12 +33,12 @@ void begin(int rxPin, int txPin, uint32_t baud) {
         txPin = SIMTX;
     if (baud == 0)
         baud = SIM_BAUD;
+
     Serial.println("\n=== [SIM] begin() START ===");
     Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin,
                   baud);
 
-    // Сохраняем параметры
-
+    // Очистка старого SoftwareSerial
     Serial.println("[SIM] Step 1: Deleting old SoftwareSerial if exists...");
     if (simSerial) {
         delete simSerial;
@@ -38,21 +46,18 @@ void begin(int rxPin, int txPin, uint32_t baud) {
         Serial.println("[SIM] Old object deleted");
     }
 
+    // Создание SoftwareSerial (ОДИН РАЗ)
     Serial.println("[SIM] Step 2: Creating SoftwareSerial with pins...");
-    // Передаём пины в конструктор
     simSerial = new SoftwareSerial(rxPin, txPin);
     Serial.println("[SIM] SoftwareSerial created");
 
     Serial.println("[SIM] Step 3: Calling begin(baud)...");
-    // begin() вызываем только с baud
     Serial.println("[SIM] Disabling WDT temporarily...");
-    esp_task_wdt_deinit(); // Отключаем сторожевик
+    esp_task_wdt_deinit();
 
-    simSerial = new SoftwareSerial(rxPin, txPin);
-    simSerial->begin(baud);
+    simSerial->begin(baud); // ← Убрано дублирование new SoftwareSerial
 
     Serial.println("[SIM] Re-enabling WDT...");
-    // Включаем обратно (таймаут 5 сек)
     esp_task_wdt_init(5, true);
     Serial.println("[SIM] begin(baud) completed");
 
@@ -60,17 +65,25 @@ void begin(int rxPin, int txPin, uint32_t baud) {
     simSerial->setTimeout(1000);
     Serial.println("[SIM] Timeout set");
 
+    // 🔹 Инициализация модема: разыменовываем указатели через *
     Serial.println("[SIM] Step 5: Creating TinyGsm object...");
-    if (!modem) {
-        modem = new TinyGsm(*simSerial);
-        Serial.println("[SIM] TinyGsm created");
-    }
+    modem = new TinyGsm(*simSerial); // ← *simSerial, не simSerial
+    Serial.println("[SIM] TinyGsm created");
 
     Serial.println("[SIM] Step 6: Creating TinyGsmClient object...");
-    if (!client) {
-        client = new TinyGsmClient(*modem);
-        Serial.println("[SIM] TinyGsmClient created");
-    }
+    client = new TinyGsmClient(*modem); // ← *modem
+    Serial.println("[SIM] TinyGsmClient created");
+
+    Serial.println("[SIM] Step 7: Creating PubSubClient object...");
+    mqtt = new PubSubClient(*client); // ← *client
+
+    // 🔹 В begin(), после создания mqtt:
+    mqtt = new PubSubClient(*client);
+    mqtt->setSocketTimeout(MQTT_SOCKET_TIMEOUT); // ← Увеличь таймаут
+    mqtt->setKeepAlive(60);   // ← Уменьши keepalive (чаще пинг)
+    mqtt->setBufferSize(512); // ← Увеличь буфер
+    Serial.println("[SIM] MQTT configured");
+    Serial.println("[SIM] MQTT created");
 
     Serial.println("=== [SIM] begin() SUCCESS ===\n");
 }
@@ -87,23 +100,6 @@ void activate(bool act) {
             return;
         }
         Serial.println("[SIM] simSerial is OK");
-
-        // Serial.println("[SIM] Step 2: Restarting modem...");
-        // Serial.println("[SIM] Sending AT command to restart...");
-
-        // // Проверяем связь с модемом
-        // Serial.println("[SIM] Step 3: Testing modem connection...");
-        // bool modemExists = modem->testAT(2000);
-        // Serial.printf("[SIM] Modem testAT result: %s\n", modemExists ? "OK" :
-        // "FAILED");
-
-        // if (!modemExists)
-        // {
-        //     Serial.println("[SIM] WARNING: Modem not responding, trying
-        //     restart..."); modem->restart(); Serial.println("[SIM] Restart
-        //     command sent");
-        // }
-
         isActive = true;
         Serial.println("[SIM] activate() = TRUE");
         Serial.println("=== [SIM] activate() SUCCESS ===\n");
@@ -310,4 +306,113 @@ time_t getTimestamp() {
     return ts;
 }
 
+void buildTopic(char *outTopic, size_t size) {
+    snprintf(outTopic, size, "mqtt/devices/%s/data", IDchar);
+}
+
+// 🔹 4. MQTT-функции — используем -> вместо .
+bool mqttConnect() {
+    Serial.printf("Heap before connect: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Stack watermark: %d bytes\n",
+                  uxTaskGetStackHighWaterMark(NULL));
+    if (!mqtt) {
+        Serial.println("❌ MQTT not initialized");
+        return false;
+    }
+
+    if (mqtt->connected()) {
+        Serial.println("✅ Already connected");
+        return true;
+    }
+
+    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(),
+                  modem->getLocalIP().c_str());
+    Serial.print("Connecting MQTT... ");
+
+    // 🔹 2. Явная настройка сервера (обязательно!)
+    mqtt->setServer(broker, 1883);
+
+    // 🔹 3. Чистый сокет перед подключением
+    if (client->connected()) {
+        client->stop();
+        delay(200);
+    }
+
+    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(),
+                  modem->getLocalIP().c_str());
+    Serial.print("Connecting MQTT... ");
+
+    // 🔹 4. Отключаем ТОЛЬКО Task WDT (ESP32-S2 имеет одно ядро)
+    esp_task_wdt_deinit();
+    yield();
+
+    // 🔹 5. Минимальный connect + обслуживание сокета
+    bool status = false;
+    unsigned long start = millis();
+
+    // Пробуем подключиться с короткими итерациями
+    while (!status && (millis() - start < 15000)) {
+        modem->maintain(); // Критично для TinyGSM
+        yield();           // Сброс аппаратного WDT
+
+        // Пробуем подключиться
+        status = mqtt->connect(IDchar, IDchar, pass);
+
+        if (status)
+            break;
+
+        // Даём сокету время на обработку
+        mqtt->loop();
+        delay(300);
+    }
+
+    // 🔹 6. Включаем WDT обратно
+    esp_task_wdt_init(8, true);
+    yield();
+
+    if (status) {
+        Serial.println("✅ SUCCESS");
+        return true;
+    }
+
+    // 🔹 7. Диагностика
+    int rc = mqtt->state();
+    Serial.printf("FAILED (rc=%d)\n", rc);
+
+    // 🔹 8. Пересоздание клиента при потере соединения
+    if (rc == -2 || rc == -3) {
+        Serial.println("  → Reinitializing MQTT client...");
+        delete mqtt;
+        mqtt = new PubSubClient(*client);
+        mqtt->setServer(broker, 1883);
+        mqtt->setSocketTimeout(30);
+        mqtt->setKeepAlive(60);
+        delay(1000);
+    }
+
+    return false;
+}
+
+bool mqttSendPacket(const uint8_t *payload, size_t length) {
+    if (!mqtt || !mqtt->connected()) { // ← mqtt->
+        Serial.println("❌ MQTT not connected");
+        return false;
+    }
+
+    char topic[64];
+    buildTopic(topic, sizeof(topic));
+    Serial.printf("📡 Sending %d bytes to %s ... ", length, topic);
+
+    bool result = mqtt->publish(topic, payload, length); // ← mqtt->
+    mqtt->loop();                                        // ← mqtt->
+
+    Serial.println(result ? "OK" : "FAIL");
+    return result;
+}
+
+void mqttdisconnect() {              // ← исправил опечатку в имени
+    if (mqtt && mqtt->connected()) { // ← mqtt->
+        mqtt->disconnect();          // ← mqtt->
+    }
+}
 } // namespace SimModule

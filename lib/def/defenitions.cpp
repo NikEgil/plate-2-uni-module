@@ -2,12 +2,12 @@
 const char *apn = "m2m.mts.ru"; // Access Point Name
 const char *gprsUser = "mts";   // GPRS username (if required)
 const char *gprsPass = "mts";   // GPRS password (if required)
-
-const char *broker = "158.160.220.169";
+// 158.160.240.169
+const char *broker = "158.160.240.169";
 const int ID = 99999999;
 const char *IDchar = "99999999";
 const char *pass = "A1B2CA3D9999";
-const int activeport[] = {1,4};
+const int activeport[] = {1, 4};
 const int sensReg[] = {
     10, 2,  2,  2,  2,  2,  2,  7,  2,  10, 10, 10, 10, 10, 10, 10, 10, 10,
     10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 3,  10, 10, 10, 10, 10,

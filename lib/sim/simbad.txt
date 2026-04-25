@@ -1,0 +1,148 @@
+#define TINY_GSM_MODEM_SIM800
+#define TINY_GSM_DEBUG Serial
+#include "sim.h"
+#include <SoftwareSerial.h>
+#include <TinyGsmClient.h>
+#include <PubSubClient.h>
+#include <esp_task_wdt.h>
+
+namespace {
+    SoftwareSerial* simSerial = nullptr;
+    TinyGsm* modem = nullptr;
+    TinyGsmClient* client = nullptr;
+    PubSubClient* mqtt = nullptr;
+    
+    bool isActive = false;
+    bool isGprsConnected = false;
+    int simRxPin = -1;
+    int simTxPin = -1;
+    uint32_t simBaud = 0;
+
+    bool initModemChain() {
+        if (!simSerial) return false;
+        if (!modem) modem = new TinyGsm(*simSerial);
+        if (!client) client = new TinyGsmClient(*modem);
+        if (!mqtt) mqtt = new PubSubClient(*client);
+        return true;
+    }
+
+    void cleanupModemChain() {
+        if (mqtt) { delete mqtt; mqtt = nullptr; }
+        if (client) { delete client; client = nullptr; }
+        if (modem) { delete modem; modem = nullptr; }
+    }
+}
+
+namespace SimModule {
+
+// 🔹 Реализация — объявлена в sim.h, определена здесь
+PubSubClient* getMqttClient() {
+    if (!mqtt && simSerial) {
+        initModemChain();
+    }
+    return mqtt;
+}
+
+void begin(int rxPin, int txPin, uint32_t baud) {
+    // ... твой код begin() ...
+    if (rxPin == -1) rxPin = SIMRX;
+    if (txPin == -1) txPin = SIMTX;
+    if (baud == 0) baud = SIM_BAUD;
+    
+    Serial.println("\n=== [SIM] begin() START ===");
+    
+    if (simSerial) {
+        cleanupModemChain();
+        delete simSerial;
+        simSerial = nullptr;
+    }
+    
+    simSerial = new SoftwareSerial(rxPin, txPin);
+    esp_task_wdt_deinit();
+    simSerial->begin(baud);
+    simSerial->setTimeout(1000);
+    esp_task_wdt_init(5, true);
+    
+    if (!initModemChain()) {
+        Serial.println("❌ Failed to init modem chain");
+        return;
+    }
+    Serial.println("=== [SIM] begin() SUCCESS ===\n");
+}
+
+// ... остальные функции (activate, connect, и т.д.) ...
+
+bool mqttConnect() {
+    PubSubClient* m = getMqttClient();  // Используем геттер
+    if (!m) {
+        Serial.println("❌ MQTT client not initialized");
+        return false;
+    }
+    if (m->connected()) return true;
+    
+    if (!modem) {
+        Serial.println("❌ Modem not initialized");
+        return false;
+    }
+    
+    if (!modem->isNetworkConnected()) {
+        Serial.print("Waiting for network...");
+        if (!modem->waitForNetwork(30000L)) {
+            Serial.println(" FAIL");
+            return false;
+        }
+        Serial.println(" OK");
+    }
+    
+    Serial.print("Connecting MQTT to ");
+    Serial.print(broker);
+    
+    esp_task_wdt_init(60, false);
+    yield();
+    
+    unsigned long start = millis();
+    while (!m->connected() && (millis() - start < 30000)) {
+        modem->maintain();
+        yield();
+        if (m->connect(IDchar, IDchar, pass)) break;
+        delay(500);
+    }
+    
+    esp_task_wdt_init(8, true);
+    yield();
+    
+    if (m->connected()) {
+        Serial.println(" ✅ MQTT Connected");
+        return true;
+    } else {
+        Serial.print(" ❌ MQTT Failed, rc=");
+        Serial.println(m->state());
+        return false;
+    }
+}
+
+bool mqttSendPacket(const uint8_t* payload, size_t length) {
+    PubSubClient* m = getMqttClient();
+    if (!m || !m->connected()) {
+        Serial.println("❌ MQTT not connected");
+        return false;
+    }
+    
+    char topic[64];
+    snprintf(topic, sizeof(topic), "mqtt/devices/%s/data", IDchar);
+    Serial.printf("📡 Sending %d bytes to %s ... ", length, topic);
+    
+    bool result = m->publish(topic, payload, length);
+    m->loop();
+    Serial.println(result ? "OK" : "FAIL");
+    return result;
+}
+
+void mqttdisconnect() {
+    PubSubClient* m = getMqttClient();
+    if (m && m->connected()) {
+        m->disconnect();
+    }
+}
+
+} // namespace SimModule

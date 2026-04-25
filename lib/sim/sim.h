@@ -1,41 +1,42 @@
 #pragma once
 #include <Arduino.h>
-#include <SoftwareSerial.h>
 #include <defenitions.h>
+// #include <PubSubClient.h>
 
 namespace SimModule {
-// Инициализация (вызвать один раз в setup)
-void begin(int rxPin = -1, int txPin = -1, uint32_t baud = 0);
-// Включение/выключение модема (питание/перезагрузка)
-void activate(bool act);
-
-// Подключение к сети и GPRS
-bool connect(const char *apn, const char *user = "", const char *pass = "");
-
-// Отключение от сети
-void disconnect();
-
-// Статус
-bool isConnection();
-bool hasNetwork();
-
-// Утилиты
-int getSignalQuality();
-String getLocalIP();
-String getModemInfo();
-// Прямой доступ к клиенту (для HTTP/MQTT)
-void *getClient(); // возвращает TinyGsmClient*
-
 struct NetTime {
     int year, month, day;
     int hour, minute, second;
     int timezone; // В четвертях часа (например, +12 = Москва)
     bool valid;
 };
-// Настройка времени
-bool enableTimeSync();    // Включает AT+CLTS=1 (один раз при первом запуске)
-NetTime getNetworkTime(); // Запрашивает время
-time_t getTimestamp();
+
+// 🔹 3. begin() — исправляем инициализацию объектов
+// void begin(int rxPin, int txPin, uint32_t baud) ;
+void begin(int rxPin = -1, int txPin = -1, uint32_t baud = 0);
+void activate(bool act);
+bool connect(const char *apn, const char *user, const char *pass);
+void disconnect();
+
+bool isConnection();
+bool hasNetwork();
+int getSignalQuality();
+
+String getLocalIP();
+String getModemInfo();
+void *getClient();
+bool enableTimeSync();
+
+NetTime getNetworkTime();
 bool syncSystemClock();
 
-}; // namespace SimModule
+time_t getTimestamp();
+
+void buildTopic(char *outTopic, size_t size);
+// 🔹 4. MQTT-функции — используем -> вместо .
+bool mqttConnect();
+
+bool mqttSendPacket(const uint8_t *payload, size_t length);
+void mqttdisconnect();
+
+} // namespace SimModule

@@ -5,10 +5,7 @@
 #include <sim.h>
 #include <sys.h>
 FlashStack stack;
-
-#include <PubSubClient.h>
-// Структура для хранения калибровочных данных
-
+uint8_t g_packet[198];
 int Battery;
 
 byte tableSens[5] = {0x00, 0x08, 0x00, 0x00, 0x01};
@@ -16,8 +13,6 @@ RTC_DATA_ATTR int state = 0;
 int rssi1 = 0;
 // #define rs485Serial Serial1
 // LoRa_E220 e220ttl(&MySerial, 15, 21, 19); //  RXTX AUX M0 M1
-
-// PubSubClient mqtt(client);
 
 // Serial1.begin(115200, SERIAL_8N1, 16, 17);
 // LoRa_E220 e220ttl(&Serial1, 8, 18, 21); //  RX TX AUX M0 M1
@@ -231,62 +226,28 @@ int rssi1 = 0;
 // 	delay(5000);
 // }
 
-// bool getSOILdata()
-// {
-// 	byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
-// 	int lenreq = 8;
-// 	int lenresponse = 32;
-// 	byte response[lenresponse] = {};
-// 	printHEX(req, lenreq);
-// 	sendRS485Data(req, lenreq);
-// 	delay(500);
-// 	rs485Serial.readBytes(response, lenresponse);
-// 	rs485Serial.flush();
-// 	Serial.println("	response:");
-// 	printHEX(response, lenresponse);
-// 	return true;
-// }
+void mqtt_send() {
+    yield();
+    if (SimModule::mqttConnect()) {
+        int l = stack.count();
+        Serial.printf("всего пакетов %i\n", l);
+        for (int i = 0; i < 2; i++) {
+            if (stack.pop(g_packet)) {
+                Serial.printf("   ✅ Popped packet #%d\n", i);
+                printHEX(g_packet, (int)g_packet[0]);
+                if (!SimModule::mqttSendPacket(g_packet, (int)g_packet[0])) {
+                    stack.push(g_packet);
+                }
 
-// boolean mqttConnect()
-// {
-// 	Serial.print("Connecting to ");
-// 	Serial.print(broker);
-// 	// Connect to MQTT Broker
-// 	// char *id = "99999999";
-// 	boolean status = mqtt.connect(IDchar, IDchar, pass);
-// 	// Or, if you want to authenticate MQTT:
-// 	// boolean status = mqtt.connect("GsmClientName", "mqtt_user",
-// "mqtt_pass"); 	if (status == false)
-// 	{
-// 		Serial.println(" fail");
-// 		return false;
-// 	}
-// 	Serial.println(" success");
-// 	return mqtt.connected();
-// }
-
-// void mqtt_send()
-// {
-// 	char topic[64] = "mqtt/devices/";
-// 	const char *topic_end = "/data";
-// 	strcat(topic, IDchar);
-// 	strcat(topic, topic_end);
-// 	Serial.println(topic);
-// 	const char *pay = "dadata";
-// 	byte data[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0xff};
-// 	bool s = mqtt.publish(topic, pay);
-// 	s = mqtt.publish(topic, data, sizeof(data));
-// 	if (s == true)
-// 	{
-// 		Serial.println("otpr");
-// 	}
-// 	else
-// 	{
-// 		Serial.println("ne otpr");
-// 	}
-// 	mqtt.disconnect();
-// }
-
+            } else {
+                Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n",
+                              i);
+            }
+        }
+        yield();
+        SimModule::mqttdisconnect();
+    }
+}
 bool searche_multisens() {
     Serial.println("founding multisens");
     byte req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
@@ -574,6 +535,13 @@ bool sim_activate(bool act) {
         if (SimModule::connect(apn, gprsUser, gprsPass)) {
             Serial.println("	sim connected");
             rssi1 = SimModule::getSignalQuality();
+            if (!isTime()) {
+                if (SimModule::syncSystemClock()) {
+                    Serial.println("✓ Time ready");
+                }
+                printCurrentTime();
+            }
+
             return true;
         } else {
             return false;
@@ -610,7 +578,6 @@ void getNetTime() {
 //     size_t len = preparePacket(packet, ID, Battery, data, rssi1, 0);
 //     printHEX(packet, 200);
 // }
-uint8_t g_packet[198];
 
 void doAction1() {
     Serial.println(">>> Action 1 (GPIO 8)");
@@ -635,23 +602,10 @@ void doAction2() {
     blink(1, 500);
     blink(2, 250);
 
-    // searchSensors(1);
-    // searchSensors(4);
-    int l = stack.count();
-    for (int i = 0; i < l; i++) {
-        uint8_t packet[198];
-
-        if (stack.pop(packet)) {
-            Serial.printf("   ✅ Popped packet #%d\n", i);
-            printHEX(packet, (int)packet[0]);
-            Serial.printf("      Remaining: %d records\n", stack.count());
-        } else {
-            Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n", i);
-        }
-    }
+    searchSensors(1);
+    searchSensors(4);
 }
 void dataPrepare() {
-
     byte dateBytes[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     if (isTime()) {
         getPackedTimeBytes(dateBytes);
@@ -664,7 +618,7 @@ void dataPrepare() {
     // 2. Получаем данные измерений (предполагаем, что measure() возвращает
     // MeasureResult)
     MeasureResult mRes;
-    
+
     for (int port = 0; port < 2; port++) {
         mRes = measure(activeport[port]); // или другой порт
         Serial.printf("Port %d: valid=%d, data=%p, len=%d\n", activeport[port],
@@ -764,7 +718,6 @@ void setup() {
         Serial.println("❌ Failed to init FlashStack!");
     }
 
-
     uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
 
@@ -779,6 +732,10 @@ void setup() {
 
         // stack.clear();
         dataPrepare();
+        if (sim_activate(true)) {
+            Serial.println("coneceted do mqtt");
+            mqtt_send();
+        }
         // doAction2();
         Serial.println("            complited");
         break;
