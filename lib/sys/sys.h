@@ -14,7 +14,7 @@ void waitForButtonRelease();
 // Инициализация кнопок и настройки сна
 void initPins();
 int readBatteryVoltage();
-
+uint8_t rssiToPercent(uint8_t rssiByte);
 void blink(int count, int delayy);
 
 void printHEX(byte data[], int len);
@@ -28,9 +28,9 @@ void byteArrayToHexString(const byte *byteArray, int length, String str);
 void enable_power(bool act);
 void enable_sens(int port);
 void enable_sim(bool act);
-
+void enable_lora(bool act);
 void addCRC(byte req[], int dataLength, byte response[]);
-
+bool setTimeFromHexBytes(const byte buf[6]);
 void outCRC(byte req[], int dataLength, byte outcrc[]);
 
 void sleep(int time);
@@ -38,7 +38,7 @@ void printCurrentTime();              // DEC: YYYY-MM-DD HH:MM:SS
 uint64_t getPackedTimeHex();          // ГГММДДЧЧММСС → uint64_t
 void getPackedTimeBytes(byte buf[6]); // Для отправки в RS485
 
-size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[6],
+size_t preparePacket(uint8_t *buf,int len, uint32_t id, uint8_t battery, byte date[6],
                      uint8_t signal1, uint8_t signal2);
 
 bool isTime();

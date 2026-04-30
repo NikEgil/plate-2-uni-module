@@ -6,18 +6,38 @@ namespace {
 bool isPowered = false; // Флаг состояния (сохраняется между вызовами)
 int isPortEnable = 0;
 bool isSimEnable = false;
-
+bool isLoraEnable = false;
 } // namespace
-
+#if BOARD_REV == 3 and BOARD_TYPE == 0
 void initPins() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(EG1, OUTPUT);
     pinMode(EG2, OUTPUT);
     pinMode(EG3, OUTPUT);
     pinMode(EG4, OUTPUT);
-    pinMode(EP, OUTPUT);
     pinMode(ESIM, OUTPUT);
+    pinMode(EP, OUTPUT);
+    pinMode(ELORA, OUTPUT);
+    pinMode(ADC, INPUT);
+    analogReadResolution(13);
+    analogSetAttenuation(ADC_6db);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
+                             &adc_chars);
+    pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
 
+    pinMode(SW1_PIN, INPUT_PULLUP);
+    pinMode(SW2_PIN, INPUT_PULLUP);
+    // Настраиваем пробуждение по любому из этих пинов (LOW)
+    esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
+}
+#elif BOARD_REV == 3 and BOARD_TYPE == 1
+void initPins() {
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(ESIM, OUTPUT);
+    pinMode(EP, OUTPUT);
+    pinMode(ELORA, OUTPUT);
     // настройка для измерения батареи
     pinMode(ADC, INPUT);
     analogReadResolution(13);
@@ -33,6 +53,8 @@ void initPins() {
     // Настраиваем пробуждение по любому из этих пинов (LOW)
     esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
 }
+
+#endif
 
 uint8_t readSwitchState() {
     static uint8_t lastRaw = 0;
@@ -69,7 +91,7 @@ uint8_t checkButton() {
     // Если разбудил EXT1 (внешний сигнал)
     if (cause == ESP_SLEEP_WAKEUP_EXT1) {
         uint64_t status = esp_sleep_get_ext1_wakeup_status();
-
+        waitForButtonRelease();
         if (status & (1ULL << BUT1))
             return 1;
         if (status & (1ULL << BUT2))
@@ -131,12 +153,12 @@ void printHEX(byte data[], int len) {
         Serial.println("NONE HEX");
     }
     for (int j = 0; j < len; j++) {
-        Serial.print("0x");
+        // Serial.print("0x");
         if (data[j] < 0x10)
             Serial.print("0"); // Добавляем ведущий ноль для однозначных HEX
         Serial.print(data[j], HEX);
         if (j != len - 1)
-            Serial.print(", ");
+            Serial.print(" ");
     }
     Serial.println();
 }
@@ -158,7 +180,7 @@ bool loadArrayFromFlash(byte data[]) {
 
     if (len == 8) {
         Serial.println("Данные успешно загружены из памяти");
-        printHEX(data,5);
+        printHEX(data, 5);
         return true;
     } else {
         Serial.println("Данные не найдены, инициализируем дефолтные значения");
@@ -181,7 +203,6 @@ void enable_power(bool act) {
         return;
     }
     if (act) {
-        // pinMode(E12V, OUTPUT);
         digitalWrite(EP, HIGH);
         delay(200);
         Serial.println("POWER ON");
@@ -193,41 +214,100 @@ void enable_power(bool act) {
         isPowered = false;
     }
 }
+#if BOARD_TYPE == 0
 void enable_sens(int port) {
     if (port == isPortEnable) {
         Serial.printf("Duble enable %i\n", port);
-        return;
     }
     switch (port) {
     case 1:
         // pinMode(EG1, OUTPUT);
         digitalWrite(EG1, HIGH);
         Serial.println("port 1 ON");
+        isPortEnable = 1;
         break;
     case 2:
         // pinMode(EG2, OUTPUT);
         digitalWrite(EG2, HIGH);
         Serial.println("port 2 ON");
+        isPortEnable = 2;
         break;
     case 3:
         // pinMode(EG3, OUTPUT);
         digitalWrite(EG3, HIGH);
         Serial.println("port 3 ON");
+        isPortEnable = 3;
         break;
     case 4:
         // pinMode(EG4, OUTPUT);
         digitalWrite(EG4, HIGH);
         Serial.println("port 4 ON");
+        isPortEnable = 4;
         break;
     default:
         digitalWrite(EG1, LOW);
         digitalWrite(EG2, LOW);
         digitalWrite(EG3, LOW);
         digitalWrite(EG4, LOW);
+        isPortEnable = 0;
         Serial.println("port 1234 OFF");
         break;
     }
     delay(500);
+}
+
+#endif
+
+#if NET == 0
+void enable_lora(bool act) {
+    if (act == isLoraEnable) {
+        return;
+    }
+    if (act) {
+        digitalWrite(ELORA, HIGH);
+        delay(200);
+        Serial.println("LORA ON");
+        isLoraEnable = true;
+    } else {
+        digitalWrite(ELORA, LOW);
+        delay(200);
+        Serial.println("LORA OFF");
+        isLoraEnable = false;
+    }
+}
+#elif NET == 1
+void enable_sim(bool act) {
+    if (act == isSimEnable) {
+        return;
+    }
+    if (act) {
+        digitalWrite(ESIM, HIGH);
+        delay(200);
+        Serial.println("SIM ON");
+        isSimEnable = true;
+    } else {
+        digitalWrite(ESIM, LOW);
+        delay(200);
+        Serial.println("SIM OFF");
+        isSimEnable = false;
+    }
+}
+#else
+void enable_lora(bool act) {
+    if (act == isLoraEnable) {
+        return;
+    }
+    if (act) {
+        digitalWrite(ELORA, HIGH);
+        delay(200);
+        Serial.println("LORA ON");
+        isLoraEnable = true;
+    } else {
+        digitalWrite(ELORA, LOW);
+        delay(200);
+        Serial.println("LORA OFF");
+        isLoraEnable = false;
+    }
 }
 void enable_sim(bool act) {
     if (act == isSimEnable) {
@@ -245,6 +325,7 @@ void enable_sim(bool act) {
         isSimEnable = false;
     }
 }
+#endif
 
 void addCRC(byte req[], int dataLength, byte response[]) {
     uint16_t crc = 0xFFFF;
@@ -287,13 +368,14 @@ void outCRC(byte req[], int dataLength, byte outcrc[]) {
     outcrc[0] = crc & 0xFF;        // LSB
     outcrc[1] = (crc >> 8) & 0xFF; // MSB
 }
-bool checkCRC(byte response[], int lenresponse){
-        byte crc[2] = {0x00, 0x00};
+bool checkCRC(byte response[], int lenresponse) {
+    byte crc[2] = {0x00, 0x00};
     outCRC(response, lenresponse - 2, crc);
     printHEX(crc, 2);
     // Serial.println(response[lenresponse-2],HEX);
     // Serial.println(response[lenresponse-1],HEX);
-    if (crc[1] == response[lenresponse-1] & crc[0] == response[lenresponse - 2]) {
+    if (crc[1] == response[lenresponse - 1] &
+        crc[0] == response[lenresponse - 2]) {
         Serial.println("CRC OK");
         return true;
     } else {
@@ -307,19 +389,19 @@ void printCurrentTime() {
     time(&now);
     // Проверка: время не установлено (эпоха 1970)
     if (now < 946684800) { // 1 Jan 2000 00:00:00 UTC
-        Serial.println("false");
+        Serial.println("no time, <2000 ");
         return;
     }
     struct tm timeinfo;
     // localtime_r может вернуть NULL при ошибке
     struct tm *ti = localtime_r(&now, &timeinfo);
     if (!ti) {
-        Serial.println("false");
+        Serial.println("no time, null");
         return;
     }
     // Проверка на разумные значения
     if (ti->tm_year < 120) { // Год < 2020
-        Serial.println("false");
+        Serial.println("no time, <2020");
         return;
     }
     Serial.printf("%04d-%02d-%02d %02d:%02d:%02d\n", ti->tm_year + 1900,
@@ -331,26 +413,99 @@ void printCurrentTime() {
 bool isTime() {
     time_t now;
     time(&now);
+
+    // Проверка на валидность времени (эпоха)
     if (now < 946684800) { // 1 Jan 2000 00:00:00 UTC
-        Serial.println("false");
+        Serial.println("no time, <2000 ");
         return false;
     }
 
     struct tm timeinfo;
-    // localtime_r может вернуть NULL при ошибке
     struct tm *ti = localtime_r(&now, &timeinfo);
     if (!ti) {
-        Serial.println("false");
+        Serial.println("no time, null");
         return false;
     }
 
-    // Проверка на разумные значения
+    // Проверка на разумные значения года
     if (ti->tm_year < 120) { // Год < 2020
-        Serial.println("false");
+        Serial.println("no time, <2020");
         return false;
     }
+
+    // 🔹 НОВАЯ ПРОВЕРКА: если час 0 И минуты < 30 → возврат false
+    // (Интервал 00:00 ... 00:29:59)
+    if (ti->tm_hour == 16 && ti->tm_min < 30) {
+        Serial.printf("⏱ Time blocked: %02d:%02d (00:00-00:30 window)\n",
+                      ti->tm_hour, ti->tm_min);
+        return false;
+    }
+
     return true;
 }
+
+
+bool setTimeFromHexBytes(const byte buf[6]) {
+    if (!buf) return false;
+    
+    // 🔹 1. Извлекаем значения
+    uint8_t yy = buf[0];  // 00-99
+    uint8_t mm = buf[1];  // 1-12
+    uint8_t dd = buf[2];  // 1-31
+    uint8_t hh = buf[3];  // 0-23
+    uint8_t mi = buf[4];  // 0-59
+    uint8_t ss = buf[5];  // 0-59
+    
+    // 🔹 2. Валидация диапазонов
+    if (mm < 1 || mm > 12) {
+        Serial.printf("⚠️ Invalid month: %d\n", mm);
+        return false;
+    }
+    if (dd < 1 || dd > 31) {
+        Serial.printf("⚠️ Invalid day: %d\n", dd);
+        return false;
+    }
+    if (hh > 23 || mi > 59 || ss > 59) {
+        Serial.println("⚠️ Invalid time components");
+        return false;
+    }
+    
+    // 🔹 3. Конвертируем в struct tm
+    struct tm timeinfo = {0};
+    timeinfo.tm_year = (yy < 100) ? (yy + 100) : yy;  // years since 1900 (2000 = 100)
+    timeinfo.tm_mon  = mm - 1;                         // 0-based month [0-11]
+    timeinfo.tm_mday = dd;
+    timeinfo.tm_hour = hh;
+    timeinfo.tm_min  = mi;
+    timeinfo.tm_sec  = ss;
+    timeinfo.tm_isdst = -1;  // auto-detect DST
+    
+    // 🔹 4. Конвертируем в time_t (Unix timestamp)
+    time_t ts = mktime(&timeinfo);
+    if (ts < 0) {
+        Serial.println("⚠️ mktime() failed");
+        return false;
+    }
+    
+    // 🔹 5. Устанавливаем системное время
+    struct timeval tv = {
+        .tv_sec = ts,
+        .tv_usec = 0
+    };
+    
+    if (settimeofday(&tv, nullptr) != 0) {
+        Serial.println("⚠️ settimeofday() failed");
+        return false;
+    }
+    
+    // 🔹 6. Логирование
+    Serial.printf("✅ Time set: 20%02d-%02d-%02d %02d:%02d:%02d UTC\n",
+                  yy, mm, dd, hh, mi, ss);
+    
+    return true;
+}
+
+
 
 // подготовительная функция
 uint64_t getPackedTimeHex() {
@@ -374,14 +529,26 @@ void getPackedTimeBytes(byte buf[6]) {
     buf[4] = (val >> 8) & 0xFF;
     buf[5] = val & 0xFF;
 }
+uint8_t rssiToPercent(uint8_t rssiByte) {
+    // Формула из мануала Ebyte (стр. 16): dBm = -RSSI / 2
+    int16_t dbm = -(rssiByte >> 1);  // Быстрое деление на 2
 
+    // Практический диапазон LoRa:
+    // ≥ -30 dBm → 100% (очень близко / идеально)
+    // ≤ -90 dBm →   0% (шумовой порог / обрыв)
+    if (dbm >= -30) return 100;
+    if (dbm <= -90) return 0;
+
+    // Линейная интерполяция без float (экономит такты ESP32)
+    return (uint8_t)(((dbm + 90) * 100) / 60);
+}
 // подготовка начала пакета для отправления
-size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[],
+size_t preparePacket(uint8_t *buf, int len,uint32_t id, uint8_t battery, byte date[],
                      uint8_t signal1, uint8_t signal2) {
     if (!buf)
         return 0;
     // 1. Полная очистка буфера (0-199 = 0x00)
-    memset(buf, 0x00, 200);
+    memset(buf, 0x00, len);
     // 2. ID: 3 байта, старший байт первый (Big-Endian)
     // Пример: ID=0x123456 → [0x12][0x34][0x56]
     buf[1] = (byte)(id >> 16) & 0xFF;
@@ -399,15 +566,15 @@ size_t preparePacket(uint8_t *buf, uint32_t id, uint8_t battery, byte date[],
     // 5. Качество сигнала: 2 байта
     buf[11] = signal1;
     buf[12] = signal2;
-    Serial.printf("ID   %i  - %#02x %#02x %#02x\n", ID, buf[0], buf[1], buf[2]);
-    Serial.printf("bat  %i          - %#02x\n", battery, buf[3]);
+    Serial.printf("ID   %i  - %#02x %#02x %#02x\n", ID, buf[1], buf[2], buf[3]);
+    Serial.printf("bat  %i          - %#02x\n", battery, buf[4]);
     Serial.print("data  ");
     uint16_t year = date[0] < 100 ? 2000 + date[0] : date[0];
     Serial.printf("%04d-%02d-%02d %02d:%02d:%02d\n", year, date[1], date[2],
                   date[3], date[4], date[5]);
     printHEX(date, 6);
-    Serial.printf("rssi1  %i  - %#02x\n", signal1, buf[10]);
-    Serial.printf("rssi2  %i  - %#02x\n", signal2, buf[11]);
+    Serial.printf("rssi1  %i  - %#02x\n", signal1, buf[11]);
+    Serial.printf("rssi2  %i  - %#02x\n", signal2, buf[12]);
     // Bytes 12-199 уже заполнены нулями через memset
 
     return 13; // Возвращаем длину полезных данных

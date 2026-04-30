@@ -1,5 +1,8 @@
 #include "rs.h"
 #include <SoftwareSerial.h>
+
+#if BOARD_TYPE == 0
+
 using namespace RsModbus;
 namespace {
 SoftwareSerial rsSerial;
@@ -92,3 +95,4 @@ size_t receiveData(byte *buffer, size_t maxLen, uint32_t silenceTimeout_ms) {
 }
 
 } // namespace RsModbus
+#endif

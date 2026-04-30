@@ -8,7 +8,7 @@
 #include <SoftwareSerial.h>
 #include <TinyGsmClient.h> // ← TinyGsm определится только после #define выше
 #include <esp_task_wdt.h>
-
+#if NET>0
 // 🔹 2. NAMESPACE — оставляем как есть (указатели)
 namespace {
 SoftwareSerial *simSerial = nullptr;
@@ -416,3 +416,4 @@ void mqttdisconnect() {              // ← исправил опечатку в
     }
 }
 } // namespace SimModule
+#endif

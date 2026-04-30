@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <defenitions.h>
 // #include <PubSubClient.h>
-
+#if NET>0
 namespace SimModule {
 struct NetTime {
     int year, month, day;
@@ -40,3 +40,5 @@ bool mqttSendPacket(const uint8_t *payload, size_t length);
 void mqttdisconnect();
 
 } // namespace SimModule
+
+#endif
