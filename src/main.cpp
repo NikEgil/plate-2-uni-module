@@ -21,13 +21,14 @@
 
 FlashStack stack;
 uint8_t g_packet[198];
+uint8_t a_packet[250];
 static uint8_t rxBuffer[250];
 
 int Battery;
 byte tableSens[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
+byte ccid[10] = {};
 RTC_DATA_ATTR int state = 1;
-int rssi1 = 0;
-
+int signalp = 0;
 void cleanUpStack() {
     if (!LittleFS.begin()) {
         Serial.println("LittleFS mount failed");
@@ -50,6 +51,7 @@ void cleanUpStack() {
         Serial.printf("✅ Stack initialized. RECORD_SIZE=%d, count=%d\n",
                       RECORD_SIZE, stack.count());
     }
+    blink(2, 750);
 }
 #if BOARD_TYPE == 0
 bool searche_multisens() {
@@ -284,7 +286,7 @@ void dataPrepare() {
     uint8_t *packet = g_packet;
     memset(packet, 0, sizeof(g_packet));
     // 1. Заполняем заголовок и базовые поля
-    size_t len = preparePacket(packet, 198, ID, Battery, dateBytes, 0, 0);
+    size_t len = preparePacket(packet, 198, ID, Battery, dateBytes);
 
     // 2. Получаем данные измерений (предполагаем, что measure() возвращает
     // MeasureResult)
@@ -348,193 +350,234 @@ void Stack_and_sensors() {
 #endif
 
 #if NET == 1 or NET == 2
-bool sim_activate(bool act) {
-    if (SimModule::isConnection()) {
-        return true;
+void getNetTime() {
+
+    Serial.println("Enabling time sync...");
+    if (SimModule::enableTimeSync()) {
     }
+    delay(2000); // Ждём NITZ-обновление от вышки
+    for (int i = 0; i < 6; i++) {
+        if (SimModule::syncSystemClock()) {
+            Serial.println("✓ Time ready");
+            blink(2, 1000);
+            break;
+        } else {
+            delay(5000);
+        }
+    }
+
+    printCurrentTime();
+}
+
+bool sim_activate(bool act) {
+    // if (SimModule::isConnection()) {
+    //     return true;
+    // }
     if (act) {
+        yield();
         enable_power(true);
         enable_sim(true);
         // enable_sens(0);
         SimModule::begin();
         SimModule::activate(true);
+        //  SimModule::ccid(ccid);
+        delay(3000);
+        yield();
+
         if (SimModule::connect(apn, gprsUser, gprsPass)) {
             Serial.println("	sim connected");
-            rssi1 = SimModule::getSignalQuality();
+            signalp = SimModule::getSignalQuality();
+            SimModule::ccid(ccid);
+            printHEX(ccid, 10);
+            printCurrentTime();
+            if (!isTime()) {
+                getNetTime();
+            }
             blink(1, 1000);
             return true;
         } else {
             return false;
         }
     } else {
-        if (SimModule::isConnection()) {
-            SimModule::disconnect();
-        }
+        // if (SimModule::isConnection()) {
+        SimModule::disconnect();
+        // }
         enable_sim(false);
+        enable_power(false);
         Serial.println("	sim disconnected");
         return true;
     }
 }
 
-void getNetTime() {
-    if (sim_activate(true)) {
-        // delay(10000);
-        Serial.println("Enabling time sync...");
-        SimModule::enableTimeSync();
-        delay(20000); // Ждём NITZ-обновление от вышки
-        if (SimModule::syncSystemClock()) {
-            Serial.println("✓ Time ready");
-            blink(2, 1000);
-        }
-    }
-    printCurrentTime();
-}
-
 void SIM_check_signal() {
-    Serial.println(">>> Action 1 (GPIO 8)");
+    Serial.printf(">>> Action 1 (GPIO %i)", BUT1);
     blink(1, 1500);
-    blink(1, 750);
 
-    uint8_t chanel = readSwitchState();
-    // Обрабатываем только реальные изменения (не 0xFF)
-    if (chanel != 0xFF) {
-        Serial.printf("Switch changed: %d%d (dec: %d)\n",
-                      (chanel & 0x02) ? 1 : 0, // Ползунок 2
-                      (chanel & 0x01) ? 1 : 0, // Ползунок 1
-                      chanel);
-    }
     if (sim_activate(true)) {
-        int signal = SimModule::getSignalQuality();
-        if (signal <= 20) {
-            Serial.printf("signal %i, 1", signal);
+        delay(2000);
+        if (signalp <= 20) {
+            Serial.printf("signal %i, 1\n", signalp);
             blink(1, 750);
-        } else if (signal <= 40) {
-            Serial.printf("signal %i, 2", signal);
+        } else if (signalp <= 40) {
+            Serial.printf("signal %i, 2\n", signalp);
             blink(2, 750);
-        } else if (signal <= 60) {
-            Serial.printf("signal %i, 3", signal);
+        } else if (signalp <= 60) {
+            Serial.printf("signal %i, 3\n", signalp);
             blink(3, 750);
-        } else if (signal <= 80) {
-            Serial.printf("signal %i, 4", signal);
+        } else if (signalp <= 80) {
+            Serial.printf("signal %i, 4\n", signalp);
             blink(4, 750);
         } else {
-            Serial.printf("signal %i, 5", signal);
+            Serial.printf("signal %i, 5\n", signalp);
             blink(5, 750);
         }
-        if (!isTime()) {
-            getNetTime();
-        }
+
     } else {
         blink(10, 250);
     }
+    sim_activate(false);
 }
 
-void mqtt_send() {
+int adding() {
+    memset(a_packet, 0, 250);
+    memcpy(a_packet, ccid, 10);
+
+    a_packet[10] = (byte)(ID >> 16) & 0xFF;
+    a_packet[11] = (byte)(ID >> 8) & 0xFF;
+    a_packet[12] = (byte)(ID) & 0xFF;
+    a_packet[13] = (byte)Battery;
+    a_packet[14] = (byte)signalp;
+
+    Serial.printf("bat %i, signal %i\n", Battery, signalp);
+    int lgp = (int)g_packet[0];
+    printHEX(g_packet, 198);
+    Serial.printf("one %i\n", lgp);
+    if (g_packet[lgp] == 0x00) {
+        Serial.println("no lora data");
+        a_packet[15] = 0x00;
+    } else {
+        Serial.println("its lora data");
+        a_packet[15] = rssip(g_packet[lgp]);
+    }
+    int len = 16;
+    Serial.println("a_packet:");
+    printHEX(a_packet, len);
+    memcpy(a_packet + len, g_packet, lgp);
+    return len + lgp;
+}
+
+bool mqtt_send() {
     yield();
     if (SimModule::mqttConnect()) {
         int l = stack.count();
         Serial.printf("всего пакетов %i\n", l);
         for (int i = 0; i < l; i++) {
+            yield();
             if (stack.pop(g_packet)) {
                 Serial.printf("   ✅ Popped packet #%d\n", i);
-                g_packet[11] = (byte)rssi1;
-                printHEX(g_packet, (int)g_packet[0]);
-                if (!SimModule::mqttSendPacket(g_packet, (int)g_packet[0])) {
-                    g_packet[11] = 0;
+                printHEX(g_packet, (int)g_packet[0] + 1);
+                int len = adding();
+                Serial.printf("   Sending packet #%d\n", len);
+                printHEX(a_packet, len);
+                if (!SimModule::mqttSendPacket(a_packet, len)) {
                     stack.push(g_packet);
+                    SimModule::mqttdisconnect();
+                    return false;
                 } else {
                     blink(1, 500);
                 }
             } else {
-                Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n",
+                Serial.printf("❌ Failed to pop packet #%d (stack empty?)\n",
                               i);
             }
         }
         yield();
         SimModule::mqttdisconnect();
+        return true;
+
     } else {
         blink(10, 250);
+        return false;
     }
 }
 
 #endif
 
-bool lora_activate(bool act) {
+void lora_activate(bool act) {
     if (act) {
         enable_lora(1);
         delay(1000);
-        return LoRa::begin();
+        Serial.printf("LoRa:: begin, %i", LoRa::begin());
     } else {
-        bool state1 = LoRa::end();
+        Serial.printf("LoRa:: begin, %i", LoRa::end());
         delay(1000);
-        return state1;
+        enable_lora(0);
     }
 }
 
 void lora_send(int l = 0) {
     yield();
     bool da = false;
-    if (lora_activate(true)) {
-        if (l == 0) {
-            l = stack.count();
-        }
-        Serial.printf("всего пакетов %i\n", l);
-        for (int i = 0; i < l; i++) {
-            if (stack.pop(g_packet)) {
-                Serial.printf("   ✅ Popped packet #%d\n", i);
-                g_packet[11] = (byte)rssi1;
-                printHEX(g_packet, (int)g_packet[0]);
-                int len = 0;
-                if (LoRa::send(g_packet, (int)g_packet[0])) {
-                    for (int k = 0; k < 100; k++) {
-                        len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
-                        if (len > 0) {
-                            printHEX(rxBuffer, len);
-                            float rssi = (float)rxBuffer[len - 1];
-                            Serial.println(rssi);
-                            int16_t dbm = (int)-(rssi / 2);
-                            int perc = (uint8_t)(((dbm + 128) * 100) / 108);
-                            if (len > 0 and rxBuffer[3] == 0xff) {
-                                if (rxBuffer[0] == (byte)(ID >> 16) & 0xFF and
-                                    rxBuffer[1] == (byte)(ID >> 8) & 0xFF and
-                                    rxBuffer[2] == (byte)(ID) & 0xFF) {
-                                    Serial.println(" ID OK");
-                                    Serial.printf("rssi get %f,perc %i", rssi,
-                                                  perc);
-                                    byte dateBytes[6] = {
-                                        rxBuffer[4], rxBuffer[5], rxBuffer[6],
-                                        rxBuffer[7], rxBuffer[8], rxBuffer[9]};
-                                    if(setTimeFromHexBytes(dateBytes))
-                                    {printCurrentTime();}
-                                    blink(1, 2000);
-                                    da = true;
-                                    break;
-                                } else {
-                                    break;
-                                }
-                            }
-                        } else {
-                            Serial.print('.');
-                        }
-                        delay(50);
-                    }
-                }
-            } else {
-                Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n",
-                              i);
-            }
-            if (!da) {
-                Serial.printf("   ❌ Failed sending");
-                stack.push(g_packet);
-                blink(10, 250);
-            }
-        }
-
-        yield();
-        lora_activate(false);
+    lora_activate(true);
+    // int l = stack.count();
+    if (stack.count() > 3) {
+        l = 3;
     } else {
-        blink(10, 250);
+        l = stack.count();
     }
+    Serial.printf("всего пакетов %i\n", l);
+    for (int i = 0; i < l; i++) {
+        if (stack.pop(g_packet)) {
+            Serial.printf("   ✅ Popped packet #%d\n", i);
+            printHEX(g_packet, (int)g_packet[0]);
+            int len = 0;
+            if (LoRa::send(g_packet, (int)g_packet[0])) {
+                for (int k = 0; k < 100; k++) {
+                    len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
+                    if (len > 0) {
+                        printHEX(rxBuffer, len);
+                        float rssi = (float)rxBuffer[len - 1];
+                        Serial.println(rssi);
+                        int16_t dbm = (int)-(rssi / 2);
+                        int perc = (uint8_t)(((dbm + 128) * 100) / 108);
+                        if (len > 0 and rxBuffer[3] == 0xff) {
+                            if (rxBuffer[0] == (byte)(ID >> 16) & 0xFF and
+                                rxBuffer[1] == (byte)(ID >> 8) & 0xFF and
+                                rxBuffer[2] == (byte)(ID) & 0xFF) {
+                                Serial.println(" ID OK");
+                                Serial.printf("rssi get %f,perc %i", rssi,
+                                              perc);
+                                byte dateBytes[6] = {rxBuffer[4], rxBuffer[5],
+                                                     rxBuffer[6], rxBuffer[7],
+                                                     rxBuffer[8], rxBuffer[9]};
+                                if (setTimeFromHexBytes(dateBytes)) {
+                                    printCurrentTime();
+                                }
+                                blink(1, 2000);
+                                da = true;
+                                break;
+                            } else {
+                                break;
+                            }
+                        }
+                    } else {
+                        Serial.print('.');
+                    }
+                    delay(50);
+                }
+            }
+        } else {
+            Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n", i);
+        }
+        if (!da) {
+            Serial.printf("   ❌ Failed sending");
+            stack.push(g_packet);
+            blink(10, 250);
+        }
+    }
+
+    yield();
+    lora_activate(false);
 }
 
 int lora_rssi(byte *pac) {
@@ -544,49 +587,47 @@ int lora_rssi(byte *pac) {
             len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
             if (len > 0) {
                 printHEX(rxBuffer, len);
-                float rssi = (float)rxBuffer[len - 1];
-                Serial.println(rssi);
-                int16_t dbm = (int)-(rssi / 2);
-                int perc = (uint8_t)(((dbm + 128) * 100) / 108);
                 if (len > 0 and rxBuffer[3] == 0xff) {
                     if (rxBuffer[0] == (byte)(ID >> 16) & 0xFF and
                         rxBuffer[1] == (byte)(ID >> 8) & 0xFF and
                         rxBuffer[2] == (byte)(ID) & 0xFF) {
                         Serial.println(" ID OK");
-                        Serial.printf("rssi get %f,perc %i", rssi, perc);
                         byte dateBytes[6] = {rxBuffer[4], rxBuffer[5],
                                              rxBuffer[6], rxBuffer[7],
                                              rxBuffer[8], rxBuffer[9]};
                         setTimeFromHexBytes(dateBytes);
                         printCurrentTime();
                         blink(1, 2000);
+                    } else {
+                        blink(10, 250);
                     }
                 }
-                return perc;
+                return rssip(rxBuffer[len - 1]);
             } else {
                 Serial.print('.');
             }
             delay(50);
         }
+        return -1;
 
     } else {
         Serial.printf("   ❌ Failed Send)\n");
-        return 0;
+        return -1;
     }
 }
 
 void lora_check_signal() {
-    Serial.println(">>> Action 1 (GPIO 8)");
+    Serial.printf(">>> Action 1 (GPIO %i)", BUT1);
     blink(1, 1500);
     blink(1, 750);
-    byte pac[13] = {};
+    byte pac[11] = {};
 
     byte dateBytes[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     if (isTime()) {
         getPackedTimeBytes(dateBytes);
     }
     Serial.println("da");
-    size_t len = preparePacket(pac, 13, ID, Battery, dateBytes, 1, 1);
+    size_t len = preparePacket(pac, 11, ID, Battery, dateBytes);
     pac[0] = (byte)(len);
 
     lora_activate(true);
@@ -623,6 +664,7 @@ void setup() {
         }
     }
     Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
+    Battery = readBatteryVoltage();
     RsModbus::init(REDE);
     delay(1000);
     if (!loadArrayFromFlash(tableSens)) {
@@ -676,6 +718,7 @@ void setup() {
         }
     }
     Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
+    Battery = readBatteryVoltage();
     RsModbus::init(REDE);
     delay(1000);
     if (!loadArrayFromFlash(tableSens)) {
@@ -705,9 +748,9 @@ void setup() {
         break;
     default:
         dataPrepare();
-        if (lora_activate(true)) {
-            lora_send();
-        }
+        lora_activate(true);
+        lora_send();
+
         Serial.println("            complited");
         Serial.println("one run");
         break;
@@ -718,50 +761,126 @@ void setup() {
 void loop() {}
 #elif BOARD_TYPE == 1 and BOARD_REV == 3
 
+void SIM_reset() {
+    enable_power(1);
+    enable_sim(1);
+    delay(5000);
+    SimModule::begin();
+    SimModule::activate(true);
+
+    // Сброс к заводским (опционально, только при проблемах)
+    if (SimModule::factoryReset()) {
+        Serial.println("Modem reset done. Reconnecting...");
+    }
+    enable_power(0);
+    enable_sim(0);
+}
+
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
-    for (int i = 0; i < 250; i++) {
+    for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
         }
     }
-    Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
-    // enable_power(1);
-    enable_lora(1);
-    // enable_sim(1);
+    Battery = readBatteryVoltage();
+    esp_reset_reason_t reason = esp_reset_reason();
+    Serial.printf("⚠️ Last reset: %d (4=WDT, 5=Brownout)\n", reason);
+    Serial.printf("Rev: %d, NET: %d\n", BOARD_REV, NET);
+    int b = checkButton();
+    if (b == 1) {
+        SIM_check_signal();
+    }
+    if (b == 2) {
+        cleanUpStack();
+        SIM_reset();
+    }
+    if (stack.begin()) {
+        Serial.printf("✅ Stack initialized. Current records: %d\n",
+                      stack.count());
+    } else {
+        Serial.println("❌ Failed to init FlashStack!");
+    }
     // getNetTime();
-    byte newTime[6] = {24, 4, 29, 15, 30, 45};
-    setTimeFromHexBytes(newTime);
+    // byte newTime[6] = {24, 4, 29, 15, 30, 45};
+    // setTimeFromHexBytes(newTime);
+    blink(5, 750);
     lora_activate(true);
+
     // if (LoRa::configSet(17, 1)) {
     //     LoRa::configGet();
     // }
 }
+void work() {
+    lora_activate(false);
+    enable_power(0);
+    delay(100);
+    Battery = readBatteryVoltage();
+    enable_power(1);
 
+    if (sim_activate(true)) {
+        printCurrentTime();
+        // if (!isTime()) {
+        //     getNetTime();
+        // }
+        Serial.println("coneceted do mqtt");
+        if (mqtt_send()) {
+            Serial.println("SENDING COMLITE");
+        } else {
+            Serial.println("SENDING FAIL");
+        }
+        sim_activate(false);
+    }
+    lora_activate(true);
+}
+static uint32_t lastWorkTime = 0;
+const uint32_t WORK_INTERVAL = 3UL * 60 * 1000; // 20 минут
 void loop() {
-
-    // 🔹 Неблокирующий опрос: проверяем и читаем за один вызов
     int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
-
     if (len > 0) {
         digitalWrite(LED_PIN, HIGH);
         // ✅ Пакет получен — обрабатываем
         Serial.printf("📨 Packet %d bytes\n", len);
-        printHEX(rxBuffer, len);
-        Serial.println(len);
-        byte date[6] = {};
+        printHEX(rxBuffer, (int)rxBuffer[0] + 1);
+        byte crc[2] = {};
+        byte date[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
         getPackedTimeBytes(date);
+        printCurrentTime();
+        printHEX(date, 6);
         byte pac[] = {rxBuffer[1], rxBuffer[2], rxBuffer[3], 0xff,    date[0],
                       date[1],     date[2],     date[3],     date[4], date[5]};
-        printHEX(pac, 10);
         LoRa::send(pac, 10);
-        delay(200);
-        digitalWrite(LED_PIN, LOW); // Твоя функция обработки
+        printHEX(pac, 10);
 
-    } else if (len < 1) {
-        // Serial.print(".");
+        if (checkCRC(rxBuffer, (int)rxBuffer[0])) {
+            if (len > 15) {
+                uint8_t *packet = g_packet;
+                memset(packet, 0, sizeof(g_packet));
+                memcpy(packet, rxBuffer, len);
+
+                if (stack.push(packet)) {
+                    Serial.printf("pushed len %i/ %i\n", len, stack.count());
+                    printHEX(packet, len);
+                }
+            }
+        }
+
+        digitalWrite(LED_PIN, LOW);
     }
+
+    uint32_t now = millis();
+    bool timeExpired = (now - lastWorkTime >= WORK_INTERVAL);
+
+    // Запускаем work(), если сработал триггер И прошла минимальная пауза
+    if (stack.count() > 0 and timeExpired) {
+        Serial.printf("stack %i timeExpired %i \n", stack.count(), timeExpired);
+        lastWorkTime = now; // Сбрасываем отсчёт
+        Serial.println("️ Running work()...");
+        work(); // Блокирующий вызов SIM800
+        Serial.println("️ END work()...");
+    }
+
     delay(10);
     yield();
 }

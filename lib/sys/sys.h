@@ -16,7 +16,7 @@ void initPins();
 int readBatteryVoltage();
 uint8_t rssiToPercent(uint8_t rssiByte);
 void blink(int count, int delayy);
-
+byte rssip(byte rssi);
 void printHEX(byte data[], int len);
 
 void saveArrayToFlash(byte data[]);
@@ -38,8 +38,8 @@ void printCurrentTime();              // DEC: YYYY-MM-DD HH:MM:SS
 uint64_t getPackedTimeHex();          // ГГММДДЧЧММСС → uint64_t
 void getPackedTimeBytes(byte buf[6]); // Для отправки в RS485
 
-size_t preparePacket(uint8_t *buf,int len, uint32_t id, uint8_t battery, byte date[6],
-                     uint8_t signal1, uint8_t signal2);
+size_t preparePacket(uint8_t *buf, int len, uint32_t id, uint8_t battery,
+                     byte date[6]);
 
 bool isTime();
 bool checkCRC(byte response[], int lenresponse);

@@ -55,12 +55,17 @@ void initPins() {
 }
 
 #endif
-
+byte rssip(byte rssi) {
+    float rssi1 = (float)rssi;
+    int16_t dbm = (int)-(rssi1 / 2);
+    int perc = (uint8_t)(((dbm + 128) * 100) / 108);
+    Serial.printf("rssi get %f,perc %i\n", rssi1, perc);
+    return (byte)perc;
+}
 uint8_t readSwitchState() {
     static uint8_t lastRaw = 0;
     static uint8_t lastStable = 0;
     static unsigned long lastChange = 0;
-
     // Читаем физическое состояние (INPUT_PULLUP: LOW = включено)
     uint8_t raw = 0;
     if (digitalRead(SW1_PIN) == LOW)
@@ -84,18 +89,28 @@ uint8_t readSwitchState() {
 
     return 0xFF; // Специальный код: "нет изменений" (можно игнорировать)
 }
-uint8_t checkButton() {
-    // Проверяем причину пробуждения
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
 
-    // Если разбудил EXT1 (внешний сигнал)
-    if (cause == ESP_SLEEP_WAKEUP_EXT1) {
-        uint64_t status = esp_sleep_get_ext1_wakeup_status();
+uint8_t checkButton() {
+
+    uint64_t status = 0;
+
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+        status = esp_sleep_get_ext1_wakeup_status();
+    }
+
+    delay(10); // Дебаунс
+
+    // Проверка по статусу пробуждения ИЛИ прямое чтение пинов
+    bool b1 = (status & (1ULL << BUT1)) || (digitalRead(BUT1) == LOW);
+    bool b2 = (status & (1ULL << BUT2)) || (digitalRead(BUT2) == LOW);
+
+    if (b1) {
         waitForButtonRelease();
-        if (status & (1ULL << BUT1))
-            return 1;
-        if (status & (1ULL << BUT2))
-            return 2;
+        return 1;
+    }
+    if (b2) {
+        waitForButtonRelease();
+        return 2;
     }
 
     return 0;
@@ -204,12 +219,12 @@ void enable_power(bool act) {
     }
     if (act) {
         digitalWrite(EP, HIGH);
-        delay(200);
+        delay(400);
         Serial.println("POWER ON");
         isPowered = true;
     } else {
         digitalWrite(EP, LOW);
-        delay(200);
+        delay(400);
         Serial.println("POWER OFF");
         isPowered = false;
     }
@@ -315,7 +330,7 @@ void enable_sim(bool act) {
     }
     if (act) {
         digitalWrite(ESIM, HIGH);
-        delay(200);
+        delay(2000);
         Serial.println("SIM ON");
         isSimEnable = true;
     } else {
@@ -444,18 +459,18 @@ bool isTime() {
     return true;
 }
 
-
 bool setTimeFromHexBytes(const byte buf[6]) {
-    if (!buf) return false;
-    
+    if (!buf)
+        return false;
+
     // 🔹 1. Извлекаем значения
-    uint8_t yy = buf[0];  // 00-99
-    uint8_t mm = buf[1];  // 1-12
-    uint8_t dd = buf[2];  // 1-31
-    uint8_t hh = buf[3];  // 0-23
-    uint8_t mi = buf[4];  // 0-59
-    uint8_t ss = buf[5];  // 0-59
-    
+    uint8_t yy = buf[0]; // 00-99
+    uint8_t mm = buf[1]; // 1-12
+    uint8_t dd = buf[2]; // 1-31
+    uint8_t hh = buf[3]; // 0-23
+    uint8_t mi = buf[4]; // 0-59
+    uint8_t ss = buf[5]; // 0-59
+
     // 🔹 2. Валидация диапазонов
     if (mm < 1 || mm > 12) {
         Serial.printf("⚠️ Invalid month: %d\n", mm);
@@ -469,43 +484,39 @@ bool setTimeFromHexBytes(const byte buf[6]) {
         Serial.println("⚠️ Invalid time components");
         return false;
     }
-    
+
     // 🔹 3. Конвертируем в struct tm
     struct tm timeinfo = {0};
-    timeinfo.tm_year = (yy < 100) ? (yy + 100) : yy;  // years since 1900 (2000 = 100)
-    timeinfo.tm_mon  = mm - 1;                         // 0-based month [0-11]
+    timeinfo.tm_year =
+        (yy < 100) ? (yy + 100) : yy; // years since 1900 (2000 = 100)
+    timeinfo.tm_mon = mm - 1;         // 0-based month [0-11]
     timeinfo.tm_mday = dd;
     timeinfo.tm_hour = hh;
-    timeinfo.tm_min  = mi;
-    timeinfo.tm_sec  = ss;
-    timeinfo.tm_isdst = -1;  // auto-detect DST
-    
+    timeinfo.tm_min = mi;
+    timeinfo.tm_sec = ss;
+    timeinfo.tm_isdst = -1; // auto-detect DST
+
     // 🔹 4. Конвертируем в time_t (Unix timestamp)
     time_t ts = mktime(&timeinfo);
     if (ts < 0) {
         Serial.println("⚠️ mktime() failed");
         return false;
     }
-    
+
     // 🔹 5. Устанавливаем системное время
-    struct timeval tv = {
-        .tv_sec = ts,
-        .tv_usec = 0
-    };
-    
+    struct timeval tv = {.tv_sec = ts, .tv_usec = 0};
+
     if (settimeofday(&tv, nullptr) != 0) {
         Serial.println("⚠️ settimeofday() failed");
         return false;
     }
-    
+
     // 🔹 6. Логирование
-    Serial.printf("✅ Time set: 20%02d-%02d-%02d %02d:%02d:%02d UTC\n",
-                  yy, mm, dd, hh, mi, ss);
-    
+    Serial.printf("✅ Time set: 20%02d-%02d-%02d %02d:%02d:%02d UTC\n", yy, mm,
+                  dd, hh, mi, ss);
+
     return true;
 }
-
-
 
 // подготовительная функция
 uint64_t getPackedTimeHex() {
@@ -531,20 +542,22 @@ void getPackedTimeBytes(byte buf[6]) {
 }
 uint8_t rssiToPercent(uint8_t rssiByte) {
     // Формула из мануала Ebyte (стр. 16): dBm = -RSSI / 2
-    int16_t dbm = -(rssiByte >> 1);  // Быстрое деление на 2
+    int16_t dbm = -(rssiByte >> 1); // Быстрое деление на 2
 
     // Практический диапазон LoRa:
     // ≥ -30 dBm → 100% (очень близко / идеально)
     // ≤ -90 dBm →   0% (шумовой порог / обрыв)
-    if (dbm >= -30) return 100;
-    if (dbm <= -90) return 0;
+    if (dbm >= -30)
+        return 100;
+    if (dbm <= -90)
+        return 0;
 
     // Линейная интерполяция без float (экономит такты ESP32)
     return (uint8_t)(((dbm + 90) * 100) / 60);
 }
 // подготовка начала пакета для отправления
-size_t preparePacket(uint8_t *buf, int len,uint32_t id, uint8_t battery, byte date[],
-                     uint8_t signal1, uint8_t signal2) {
+size_t preparePacket(uint8_t *buf, int len, uint32_t id, uint8_t battery,
+                     byte date[]) {
     if (!buf)
         return 0;
     // 1. Полная очистка буфера (0-199 = 0x00)
@@ -564,8 +577,6 @@ size_t preparePacket(uint8_t *buf, int len,uint32_t id, uint8_t battery, byte da
     buf[9] = date[4];
     buf[10] = date[5];
     // 5. Качество сигнала: 2 байта
-    buf[11] = signal1;
-    buf[12] = signal2;
     Serial.printf("ID   %i  - %#02x %#02x %#02x\n", ID, buf[1], buf[2], buf[3]);
     Serial.printf("bat  %i          - %#02x\n", battery, buf[4]);
     Serial.print("data  ");
@@ -573,9 +584,7 @@ size_t preparePacket(uint8_t *buf, int len,uint32_t id, uint8_t battery, byte da
     Serial.printf("%04d-%02d-%02d %02d:%02d:%02d\n", year, date[1], date[2],
                   date[3], date[4], date[5]);
     printHEX(date, 6);
-    Serial.printf("rssi1  %i  - %#02x\n", signal1, buf[11]);
-    Serial.printf("rssi2  %i  - %#02x\n", signal2, buf[12]);
     // Bytes 12-199 уже заполнены нулями через memset
 
-    return 13; // Возвращаем длину полезных данных
+    return 11; // Возвращаем длину полезных данных
 }

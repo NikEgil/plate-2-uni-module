@@ -1,0 +1,201 @@
+{
+    "field_mapping": {
+        "1": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            }
+        ],
+        "2": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            }
+        ],
+        "3": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            }
+        ],
+        "4": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            }
+        ],
+        "5": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            }
+        ],
+        "6": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            }
+        ],
+        "7": [
+            {
+                "byte": 1,
+                "name": "soil_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "soil_temperature",
+                "coef": 0.1
+            },
+            {
+                "byte": 3,
+                "name": "soil_conductivity",
+                "coef": 1
+            },
+            {
+                "byte": 4,
+                "name": "soil_ph",
+                "coef": 0.1
+            },
+            {
+                "byte": 5,
+                "name": "soil_nitrogen",
+                "coef": 1
+            },
+            {
+                "byte": 6,
+                "name": "soil_phosphorus",
+                "coef": 1
+            },
+            {
+                "byte": 7,
+                "name": "soil_potassium",
+                "coef": 1
+            }
+        ],
+        "8": [
+            {
+                "byte": 1,
+                "name": "leaf_humidity",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "leaf_temperature",
+                "coef": 0.1
+            }
+        ],
+        "20": [
+            {
+                "byte": 1,
+                "name": "lighting_power",
+                "coef": 1
+            },
+            {
+                "byte": 2,
+                "name": "lighting_power_deviation",
+                "coef": 1
+            }
+        ],
+        "30": [
+            {
+                "byte": 1,
+                "name": "air_humidity",
+                "coef": 1
+            },
+            {
+                "byte": 2,
+                "name": "air_temperature",
+                "coef": 0.1
+            },
+            {
+                "byte": 3,
+                "name": "illumination",
+                "coef": 1
+            }
+        ],
+        "36": [
+            {
+                "byte": 1,
+                "name": "temperature_x10",
+                "coef": 0.1
+            },
+            {
+                "byte": 2,
+                "name": "humidity",
+                "coef": 1
+            },
+            {
+                "byte": 3,
+                "name": "pressure_x10",
+                "coef": 0.1
+            },
+            {
+                "byte": 4,
+                "name": "wind_direction",
+                "coef": 1
+            },
+            {
+                "byte": 5,
+                "name": "wind_speed",
+                "coef": 1
+            },
+            {
+                "byte": 6,
+                "name": "wind_gust",
+                "coef": 1
+            },
+            {
+                "byte": 7,
+                "name": "uv",
+                "coef": 1
+            },
+            {
+                "byte": 8,
+                "name": "light_div5",
+                "coef": 1
+            },
+            {
+                "byte": 9,
+                "name": "rainfall_x100",
+                "coef": 0.01
+            }
+        ]
+    }
+}

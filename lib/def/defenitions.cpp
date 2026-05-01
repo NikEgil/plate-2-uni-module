@@ -10,8 +10,8 @@ const char *gprsPass = "mts";   // GPRS password (if required)
 // 158.160.240.169
 const char *broker = "158.160.240.169";
 
-const char *IDchar = "99999999";
-const char *pass = "A1B2CA3D9999";
+const char *IDchar = "00000021";
+const char *pass = "GMSL00000021";
                     
 #endif
 

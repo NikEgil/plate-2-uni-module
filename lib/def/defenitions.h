@@ -72,8 +72,8 @@ constexpr int EP = 2;
 constexpr int ELORA = 8;
 constexpr int ESIM = 3;
 constexpr int ADC = 10;
-constexpr int BUT1 = 6;
-constexpr int BUT2 = 7;
+constexpr int BUT1 = 7;
+constexpr int BUT2 = 9;
 constexpr int SW1_PIN = 36;
 constexpr int SW2_PIN = 35;
 #else

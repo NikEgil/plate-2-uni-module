@@ -2,13 +2,14 @@
 #define TINY_GSM_MODEM_SIM800
 #define TINY_GSM_DEBUG Serial
 #define MQTT_SOCKET_TIMEOUT 30 // Увеличенный таймаут сокета
+#include <string.h>            // для strlen, memset
 
 #include "sim.h"
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
 #include <TinyGsmClient.h> // ← TinyGsm определится только после #define выше
 #include <esp_task_wdt.h>
-#if NET>0
+#if NET > 0
 // 🔹 2. NAMESPACE — оставляем как есть (указатели)
 namespace {
 SoftwareSerial *simSerial = nullptr;
@@ -75,10 +76,8 @@ void begin(int rxPin, int txPin, uint32_t baud) {
     Serial.println("[SIM] TinyGsmClient created");
 
     Serial.println("[SIM] Step 7: Creating PubSubClient object...");
-    mqtt = new PubSubClient(*client); // ← *client
-
-    // 🔹 В begin(), после создания mqtt:
     mqtt = new PubSubClient(*client);
+
     mqtt->setSocketTimeout(MQTT_SOCKET_TIMEOUT); // ← Увеличь таймаут
     mqtt->setKeepAlive(60);   // ← Уменьши keepalive (чаще пинг)
     mqtt->setBufferSize(512); // ← Увеличь буфер
@@ -138,16 +137,34 @@ bool connect(const char *apn, const char *user, const char *pass) {
     Serial.print(F("Modem: "));
     Serial.println(modem->getModemName());
 
-    // Ждём сеть (3 попытки по 30 сек)
+    // 🔹 Временно увеличиваем WDT таймаут
+    esp_task_wdt_init(60, false); // 60 сек, отключен
+
+    // Ждём сеть (3 попытки по 15 сек)
     Serial.println(F("Waiting for network..."));
     for (int i = 1; i <= 3; i++) {
         Serial.printf("Try %d/3... ", i);
-        if (modem->waitForNetwork(30000L)) {
+
+        // 🔹 Разбиваем ожидание на части с yield()
+        unsigned long start = millis();
+        bool networkReady = false;
+        while (millis() - start < 15000) {
+            yield(); // 🔹 Сброс WDT
+            if (modem->isNetworkConnected()) {
+                networkReady = true;
+                break;
+            }
+            delay(100); // 🔹 Даём время на обработку
+        }
+
+        if (networkReady) {
             Serial.println(F("OK"));
             break;
         }
+
         if (i == 3) {
             Serial.println(F("Failed"));
+            esp_task_wdt_init(8, true); // Возвращаем WDT
             return false;
         }
         delay(200);
@@ -157,30 +174,195 @@ bool connect(const char *apn, const char *user, const char *pass) {
     Serial.println(F("Connecting to GPRS..."));
     for (int i = 1; i <= 3; i++) {
         Serial.printf("Try %d/3... ", i);
+
+        yield(); // 🔹 Сброс WDT перед подключением
+
         if (modem->gprsConnect(apn, user, pass)) {
             Serial.println(F("OK"));
             isGprsConnected = true;
             break;
         }
+
         if (i == 3) {
             Serial.println(F("Failed"));
+            esp_task_wdt_init(8, true); // Возвращаем WDT
             return false;
         }
+
         delay(200);
+        yield(); // 🔹 Сброс WDT между попытками
     }
+
+    // 🔹 Возвращаем стандартный WDT
+    esp_task_wdt_init(8, true);
+    yield();
+
     delay(200);
+
     // Инфо для отладки
     Serial.printf("Signal: %d\n", getSignalQuality());
     Serial.printf("IP: %s\n", getLocalIP().c_str());
 
     return true;
 }
-
-void disconnect() {
-    if (isGprsConnected) {
-        modem->gprsDisconnect();
-        isGprsConnected = false;
+bool factoryReset() {
+    if (!modem || !isActive) {
+        Serial.println("❌ Modem not active or initialized");
+        return false;
     }
+
+    Serial.println("🔄 SIM800: Starting factory reset...");
+
+    // 🔹 Отключаем панику WDT и увеличиваем таймаут (процесс займёт ~10-15 сек)
+    esp_task_wdt_init(30, false);
+    yield();
+
+    bool success = true;
+
+    // 1. Сброс к заводским настройкам
+    Serial.println("  → AT&F (Factory defaults)...");
+    // modem->sendAT("+&F");
+    String ans="";
+    if (modem->factoryDefault())
+    {
+        if (modem->waitResponse(3000,ans) != 1) {
+            Serial.println("  ⚠️ AT&F timeout/failed");
+            success = false;
+        }
+         Serial.println(ans);
+    }
+    // 2. Сохранение настроек в NVRAM
+    // Serial.println("  → AT&W (Save to memory)...");
+    // modem->sendAT("+&W");
+    // if (modem->waitResponse(3000) != 1) {
+    //     Serial.println("  ️ AT&W timeout/failed");
+    //     success = false;
+    // }
+
+    delay(500); // Ждём завершения записи в энергонезависимую память
+    // 3. Перезагрузка модуля
+    Serial.println("  → AT+CFUN=1,1 (Reboot)...");
+    modem->sendAT(GF("+CFUN=1,1"));
+    // Команда не возвращает OK, модуль уходит в аппаратный ребут
+
+    // 4. Ожидание готовности после ребута
+    Serial.println("  → Waiting for reboot completion...");
+    unsigned long start = millis();
+    bool isReady = false;
+    while (millis() - start < 15000) {
+        yield(); // 🔹 Критично: сброс WDT ESP32-S2 во время ожидания
+        modem->sendAT("AT");
+        if (modem->waitResponse(1000) == 1) {
+            isReady = true;
+            break;
+        }
+        delay(500);
+    }
+
+    if (isReady) {
+        Serial.println("✅ SIM800 factory reset & reboot OK");
+    } else {
+        Serial.println("❌ SIM800 did not respond after reboot");
+        success = false;
+    }
+
+    // 🔹 Восстанавливаем стандартный WDT
+    esp_task_wdt_init(8, true);
+    yield();
+
+    // Сбрасываем флаги состояния (GPRS теряется при ребуте)
+    isGprsConnected = false;
+    // isActive остаётся true, так как UART не закрывался
+
+    return success;
+}
+void disconnect() {
+    if (!isGprsConnected) {
+        Serial.println("⚠️ GPRS already disconnected");
+        return;
+    }
+
+    Serial.println("📡 SimModule: Disconnecting GPRS...");
+    while (simSerial->available()) {
+        simSerial->read();
+    }
+    // 🔹 1. Отключаем GPRS с проверкой статуса
+    bool result = modem->gprsDisconnect();
+
+    // 🔹 2. Ждём подтверждения от модема (критично!)
+    delay(500);
+    while (simSerial->available()) {
+        simSerial->read();
+    }
+    // 🔹 3. Очищаем UART-буфер от "хвостов"
+
+
+    // 🔹 4. Проверяем реальное состояние
+    if (modem->isGprsConnected()) {
+        Serial.println("⚠️ GPRS disconnect failed, forcing...");
+        // Принудительный сброс соединения
+        modem->sendAT("+CIPSHUT");
+        modem->waitResponse(2000);
+        delay(300);
+    }
+
+    // 🔹 5. Только теперь обновляем флаги
+    isGprsConnected = false;
+    Serial.println("✅ GPRS disconnected");
+
+    // 🔹 6. isActive НЕ сбрасываем здесь!
+    // Модуль остаётся инициализированным для повторного подключения
+    // isActive = false;  // ← УБРАТЬ отсюда
+}
+
+int ccid(byte *ccid) {
+
+    String iccid = modem->getSimCCID();
+    Serial.println(iccid);
+
+    size_t len = iccid.length();
+    memset(ccid, 0, 10);
+    for (size_t i = 0; i < 10; i++) {
+        uint8_t high = 0, low = 0;
+        // Берём символы, если вышли за длину — добиваем '0'
+        char c1 = (i * 2 < len) ? iccid[i * 2] : '0';
+        char c2 = (i * 2 + 1 < len) ? iccid[i * 2 + 1] : '0';
+
+        if (c1 >= '0' && c1 <= '9')
+            high = c1 - '0';
+        if (c2 >= '0' && c2 <= '9')
+            low = c2 - '0';
+
+        ccid[i] = (high << 4) | low;
+    }
+    return 10;
+}
+
+bool AT(const String &cmd, String &outResponse) {
+    if (!modem) {
+        Serial.println("❌ Modem not initialized");
+        return false;
+    }
+
+    Serial.printf("📡 AT: %s\n", cmd.c_str());
+    modem->sendAT(cmd);
+
+    // waitResponse возвращает: 1 = OK, 2 = ERROR, 0 = Timeout
+    int8_t status = modem->waitResponse(3000, outResponse);
+
+    if (status == 1) {
+        Serial.println("✅ OK");
+        Serial.println(outResponse);
+        return true;
+    } else if (status == 2) {
+        Serial.println("❌ ERROR from modem");
+    } else {
+        Serial.println("⏱️ Timeout waiting for response");
+    }
+
+    // Отладочный вывод сырого ответа (полезно для парсинга)
+    Serial.printf("📥 Raw: [%s]\n", outResponse.c_str());
+    return false;
 }
 
 bool isConnection() { return isGprsConnected && isActive; }
@@ -310,85 +492,131 @@ void buildTopic(char *outTopic, size_t size) {
     snprintf(outTopic, size, "mqtt/devices/%s/data", IDchar);
 }
 
-// 🔹 4. MQTT-функции — используем -> вместо .
 bool mqttConnect() {
-    Serial.printf("Heap before connect: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("Stack watermark: %d bytes\n",
-                  uxTaskGetStackHighWaterMark(NULL));
-    if (!mqtt) {
-        Serial.println("❌ MQTT not initialized");
+    // 🔹 1. Проверка инициализации
+    if (!mqtt || !client || !modem) {
+        Serial.println("❌ MQTT components not initialized");
         return false;
     }
 
+    // Уже подключены — выходим
     if (mqtt->connected()) {
         Serial.println("✅ Already connected");
         return true;
     }
 
-    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(),
-                  modem->getLocalIP().c_str());
-    Serial.print("Connecting MQTT... ");
+    // 🔹 2. Проверка GPRS перед MQTT
+    if (!modem->isGprsConnected()) {
+        Serial.println("⚠️ GPRS not connected, skipping MQTT");
+        return false;
+    }
 
-    // 🔹 2. Явная настройка сервера (обязательно!)
+    // 🔹 3. Перенастройка клиента (без пересоздания!)
     mqtt->setServer(broker, 1883);
+    mqtt->setSocketTimeout(15); // Таймаут сокета
+    mqtt->setKeepAlive(60);     // Пинг каждые 60 сек
+    mqtt->setBufferSize(512);   // Буфер под пакет
 
-    // 🔹 3. Чистый сокет перед подключением
+    // 🔹 4. Чистый сокет перед подключением
     if (client->connected()) {
+        Serial.println("Closing stale socket...");
         client->stop();
-        delay(200);
+        delay(100);
+        yield(); // Сброс аппаратного WDT
     }
 
+    // 🔹 5. Отладочная информация
     Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(),
                   modem->getLocalIP().c_str());
-    Serial.print("Connecting MQTT... ");
+    Serial.print("Connecting MQTT...");
+    Serial.flush(); // Гарантируем вывод до блокировки
 
-    // 🔹 4. Отключаем ТОЛЬКО Task WDT (ESP32-S2 имеет одно ядро)
-    esp_task_wdt_deinit();
-    yield();
+    // 🔹 6. Отключаем Task WDT на время подключения
+    esp_task_wdt_init(60, false); // 60 сек, выключен
+    delay(10);
 
-    // 🔹 5. Минимальный connect + обслуживание сокета
-    bool status = false;
+    // 🔹 7. ОДНА попытка подключения (не цикл!)
+    Serial.print("[attempting]");
+    Serial.flush();
+
     unsigned long start = millis();
+    bool status = mqtt->connect(IDchar, IDchar, pass);
+    unsigned long elapsed = millis() - start;
 
-    // Пробуем подключиться с короткими итерациями
-    while (!status && (millis() - start < 15000)) {
-        modem->maintain(); // Критично для TinyGSM
-        yield();           // Сброс аппаратного WDT
+    Serial.printf("[done in %lu ms] ", elapsed);
 
-        // Пробуем подключиться
-        status = mqtt->connect(IDchar, IDchar, pass);
-
-        if (status)
-            break;
-
-        // Даём сокету время на обработку
-        mqtt->loop();
-        delay(300);
-    }
-
-    // 🔹 6. Включаем WDT обратно
+    // 🔹 8. Включаем WDT обратно СРАЗУ после connect()
     esp_task_wdt_init(8, true);
     yield();
 
+    // 🔹 9. Успех
     if (status) {
         Serial.println("✅ SUCCESS");
+        mqtt->loop(); // Обработка входящих
         return true;
     }
 
-    // 🔹 7. Диагностика
+    // 🔹 10. Диагностика ошибки
     int rc = mqtt->state();
     Serial.printf("FAILED (rc=%d)\n", rc);
 
-    // 🔹 8. Пересоздание клиента при потере соединения
-    if (rc == -2 || rc == -3) {
-        Serial.println("  → Reinitializing MQTT client...");
-        delete mqtt;
-        mqtt = new PubSubClient(*client);
-        mqtt->setServer(broker, 1883);
-        mqtt->setSocketTimeout(30);
-        mqtt->setKeepAlive(60);
-        delay(1000);
+    switch (rc) {
+    case -4:
+        Serial.println("  → Connection refused (check credentials)");
+        break;
+    case -3:
+        Serial.println("  → Connection lost (network unstable)");
+        break;
+    case -2:
+        Serial.println("  → Connection lost during handshake");
+        break;
+    case -1:
+        Serial.println("  → Connection failed (broker unreachable)");
+        break;
+    case 1:
+        Serial.println("  → Connected but protocol error");
+        break;
+    case 2:
+        Serial.println("  → Invalid client ID");
+        break;
+    case 3:
+        Serial.println("  → Server unavailable");
+        break;
+    case 4:
+        Serial.println("  → Bad username/password");
+        break;
+    case 5:
+        Serial.println("  → Not authorized");
+        break;
+    default:
+        Serial.printf("  → Unknown error: %d\n", rc);
+        break;
     }
+
+    // 🔹 11. Восстановление состояния клиента (без пересоздания!)
+    // При ошибках -1/-2/-3 сбрасываем сокет и параметры
+    if (rc == -1 || rc == -2 || rc == -3) {
+        Serial.println("  → Resetting client state...");
+
+        // Закрываем сокет
+        if (client->connected()) {
+            client->stop();
+            delay(100);
+        }
+
+        // Перенастраиваем (те же параметры, что в begin)
+        mqtt->setServer(broker, 1883);
+        mqtt->setSocketTimeout(15);
+        mqtt->setKeepAlive(60);
+        mqtt->setBufferSize(512);
+
+        Serial.println("  → Client state reset");
+        delay(200);
+        yield();
+    }
+
+    // 🔹 12. Проверка памяти после попытки
+    Serial.printf("Heap after: %d bytes\n", ESP.getFreeHeap());
 
     return false;
 }
@@ -413,6 +641,7 @@ bool mqttSendPacket(const uint8_t *payload, size_t length) {
 void mqttdisconnect() {              // ← исправил опечатку в имени
     if (mqtt && mqtt->connected()) { // ← mqtt->
         mqtt->disconnect();          // ← mqtt->
+        Serial.println("mqtt disconected");
     }
 }
 } // namespace SimModule

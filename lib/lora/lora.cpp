@@ -296,7 +296,7 @@ bool packetAvailable() {
 // 🔹 Неблокирующий приём пакета
 int receivePacketNB(uint8_t* outBuf, size_t maxSize) {
     // 1. Базовые проверки
-
+    memset(outBuf,0x00,maxSize);
 
     // 2. ПРОВЕРКА СТАТУСА (Non-blocking gate)
     // Согласно мануалу (стр. 10), читаем только если данные готовы.

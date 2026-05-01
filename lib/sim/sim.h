@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <defenitions.h>
 // #include <PubSubClient.h>
-#if NET>0
+#if NET > 0
 namespace SimModule {
 struct NetTime {
     int year, month, day;
@@ -17,11 +17,12 @@ void begin(int rxPin = -1, int txPin = -1, uint32_t baud = 0);
 void activate(bool act);
 bool connect(const char *apn, const char *user, const char *pass);
 void disconnect();
-
+int ccid(byte *ccid);
+bool AT(const String &cmd, String &outResponse);
 bool isConnection();
 bool hasNetwork();
 int getSignalQuality();
-
+bool factoryReset() ;
 String getLocalIP();
 String getModemInfo();
 void *getClient();
