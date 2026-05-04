@@ -3,13 +3,12 @@
 #define TINY_GSM_DEBUG Serial
 #define MQTT_SOCKET_TIMEOUT 30 // Увеличенный таймаут сокета
 #include <string.h>            // для strlen, memset
-
 #include "sim.h"
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
 #include <TinyGsmClient.h> // ← TinyGsm определится только после #define выше
 #include <esp_task_wdt.h>
-#if NET > 0
+#if NET > 0 
 // 🔹 2. NAMESPACE — оставляем как есть (указатели)
 namespace {
 SoftwareSerial *simSerial = nullptr;
@@ -283,23 +282,23 @@ void disconnect() {
     }
 
     Serial.println("📡 SimModule: Disconnecting GPRS...");
-    while (simSerial->available()) {
-        simSerial->read();
-    }
-    // 🔹 1. Отключаем GPRS с проверкой статуса
-    bool result = modem->gprsDisconnect();
+    // while (simSerial->available()) {
+    //     simSerial->read();
+    // }
+    // // 🔹 1. Отключаем GPRS с проверкой статуса
+    // bool result = modem->gprsDisconnect();
 
-    // 🔹 2. Ждём подтверждения от модема (критично!)
-    delay(500);
-    while (simSerial->available()) {
-        simSerial->read();
-    }
+    // // 🔹 2. Ждём подтверждения от модема (критично!)
+    // delay(500);
+    // // while (simSerial->available()) {
+    //     simSerial->read();
+    // }
     // 🔹 3. Очищаем UART-буфер от "хвостов"
 
 
     // 🔹 4. Проверяем реальное состояние
     if (modem->isGprsConnected()) {
-        Serial.println("⚠️ GPRS disconnect failed, forcing...");
+        Serial.println("⚠️ GPRS disconnect forcing...");
         // Принудительный сброс соединения
         modem->sendAT("+CIPSHUT");
         modem->waitResponse(2000);

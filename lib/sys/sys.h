@@ -42,4 +42,5 @@ size_t preparePacket(uint8_t *buf, int len, uint32_t id, uint8_t battery,
                      byte date[6]);
 
 bool isTime();
+void printTimeFromHexBytes(const byte buf[6]) ;
 bool checkCRC(byte response[], int lenresponse);

@@ -8,7 +8,28 @@ int isPortEnable = 0;
 bool isSimEnable = false;
 bool isLoraEnable = false;
 } // namespace
-#if BOARD_REV == 3 and BOARD_TYPE == 0
+#if BOARD_REV == 2 
+void initPins() {
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(EG1, OUTPUT);
+    pinMode(EG2, OUTPUT);
+    pinMode(EG3, OUTPUT);
+    pinMode(EG4, OUTPUT);
+    pinMode(E12V, OUTPUT);
+        pinMode(E5V, OUTPUT);
+
+    pinMode(ADC, INPUT);
+    analogReadResolution(13);
+    analogSetAttenuation(ADC_6db);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
+                             &adc_chars);
+    pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
+
+    // Настраиваем пробуждение по любому из этих пинов (LOW)
+}
+#elif BOARD_REV == 3 and BOARD_TYPE == 0
 void initPins() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(EG1, OUTPUT);
@@ -149,7 +170,7 @@ int readBatteryVoltage() {
     float b = CAL_LOW.vbat - k * CAL_LOW.raw;
 
     float v = k * raw + b;
-    int vbat = v * 10;
+    int vbat = (int)(v * 10);
     Serial.printf("RAW:%i, BAT: %.3f V, int:%i \n", raw, v, vbat);
     return vbat;
 }
@@ -212,6 +233,30 @@ void byteArrayToHexString(const byte *byteArray, int length, String str) {
     }
 }
 
+#if BOARD_REV == 2
+void enable_power(bool act) {
+    if (act == isPowered) {
+        return;
+    }
+    if (act) {
+        digitalWrite(E5V, HIGH);
+        delay(400);
+        digitalWrite(E12V, HIGH);
+        delay(400);
+
+        Serial.println("POWER ON");
+        isPowered = true;
+    } else {
+        digitalWrite(E5V, LOW);
+        delay(400);
+        digitalWrite(E12V, LOW);
+        delay(400);
+        Serial.println("POWER OFF");
+        isPowered = false;
+    }
+}
+
+#elif BOARD_REV == 3
 void enable_power(bool act) {
     // Если состояние уже соответствует запросу — ничего не делаем
     if (act == isPowered) {
@@ -229,6 +274,8 @@ void enable_power(bool act) {
         isPowered = false;
     }
 }
+#endif
+
 #if BOARD_TYPE == 0
 void enable_sens(int port) {
     if (port == isPortEnable) {
@@ -273,7 +320,7 @@ void enable_sens(int port) {
 
 #endif
 
-#if NET == 0
+#if NET == 0 and BOARD_REV == 3
 void enable_lora(bool act) {
     if (act == isLoraEnable) {
         return;
@@ -307,7 +354,7 @@ void enable_sim(bool act) {
         isSimEnable = false;
     }
 }
-#else
+#elif NET == 2
 void enable_lora(bool act) {
     if (act == isLoraEnable) {
         return;
@@ -419,9 +466,9 @@ void printCurrentTime() {
         Serial.println("no time, <2020");
         return;
     }
-    Serial.printf("%04d-%02d-%02d %02d:%02d:%02d\n", ti->tm_year + 1900,
-                  ti->tm_mon + 1, ti->tm_mday, ti->tm_hour, ti->tm_min,
-                  ti->tm_sec);
+    Serial.printf("my time: %04d-%02d-%02d %02d:%02d:%02d\n",
+                  ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday, ti->tm_hour,
+                  ti->tm_min, ti->tm_sec);
 }
 
 // возват true если время правдоподобное
@@ -458,7 +505,25 @@ bool isTime() {
 
     return true;
 }
+void printTimeFromHexBytes(const byte buf[6]) {
+    if (!buf) {
+        Serial.println("⚠️ printTimeFromHexBytes: null buffer");
+        return;
+    }
 
+    // 🔹 Извлекаем значения
+    uint8_t yy = buf[0]; // 00-99
+    uint8_t mm = buf[1]; // 1-12
+    uint8_t dd = buf[2]; // 1-31
+    uint8_t hh = buf[3]; // 0-23
+    uint8_t mi = buf[4]; // 0-59
+    uint8_t ss = buf[5]; // 0-59
+
+    // 🔹 Вывод в формате: HEX и человекочитаемом
+    Serial.printf("⏱ Time: [%02X %02X %02X %02X %02X %02X] → ", yy, mm, dd, hh,
+                  mi, ss);
+    Serial.printf("20%02d-%02d-%02d %02d:%02d:%02d\n", yy, mm, dd, hh, mi, ss);
+}
 bool setTimeFromHexBytes(const byte buf[6]) {
     if (!buf)
         return false;
@@ -560,6 +625,7 @@ size_t preparePacket(uint8_t *buf, int len, uint32_t id, uint8_t battery,
                      byte date[]) {
     if (!buf)
         return 0;
+
     // 1. Полная очистка буфера (0-199 = 0x00)
     memset(buf, 0x00, len);
     // 2. ID: 3 байта, старший байт первый (Big-Endian)

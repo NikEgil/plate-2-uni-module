@@ -3,6 +3,7 @@
 #include <LoRa_E220.h>
 #include <defenitions.h>
 // 🔹 Пины для ESP32-S2 (настраиваются при компиляции)
+#if NET ==0 or NET ==2
 
 namespace LoRa {
 
@@ -28,3 +29,5 @@ void messageGetOKrssi(int rssi, uint32_t timeoutMs);
 LoRa_E220 *getClient();
 
 } // namespace LoRa
+
+#endif

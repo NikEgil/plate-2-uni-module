@@ -1,5 +1,7 @@
 #include "lora.h"
 #include <sys.h>
+#if NET ==0 or NET ==2
+
 namespace {
 // HardwareSerial *Serial1 = nullptr; // 🔹 HardwareSerial, не SoftwareSerial
 // LoRa_E220 e220 = nullptr;
@@ -389,3 +391,4 @@ bool messageGetOK(uint32_t timeoutMs) {
     return false; // Таймаут
 }
 } // namespace LoRa
+#endif

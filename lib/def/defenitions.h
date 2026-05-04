@@ -20,8 +20,9 @@ struct CalPoint {
     int raw;    // analogReadRaw()
     float vbat; // Напряжение батареи (мультиметр)
 };
-const CalPoint CAL_LOW = {.raw = 3988, .vbat = 3.601}; // Нижняя точка
-const CalPoint CAL_HIGH = {.raw = 7004, .vbat = 4.176};
+// 21
+const CalPoint CAL_LOW = {.raw = 3992, .vbat = 3.522}; // Нижняя точка
+const CalPoint CAL_HIGH = {.raw = 4668, .vbat = 4.071};
 
 constexpr int LED_PIN = 15;
 
@@ -61,7 +62,7 @@ constexpr int ESIM = 9;
 constexpr int SIMRX = 17;
 constexpr int SIMTX = 16;
 constexpr int SIM_BAUD = 9600;
-constexpr int ADC = 10;
+constexpr int ADC = 2;
 
 constexpr int BUT1 = 12;
 constexpr int BUT2 = 13;
