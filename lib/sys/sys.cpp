@@ -85,7 +85,6 @@ byte rssip(byte rssi) {
 }
 uint8_t readSwitchState() {
     static uint8_t lastRaw = 0;
-    static uint8_t lastStable = 0;
     static unsigned long lastChange = 0;
     // Читаем физическое состояние (INPUT_PULLUP: LOW = включено)
     uint8_t raw = 0;
@@ -102,40 +101,48 @@ uint8_t readSwitchState() {
 
     // Если состояние стабильно > дебаунс — принимаем его
     if (millis() - lastChange > SWITCH_DEBOUNCE_MS) {
-        if (raw != lastStable) {
-            lastStable = raw;
             return raw; // Возвращаем только при реальном изменении
-        }
+        
     }
 
-    return 0xFF; // Специальный код: "нет изменений" (можно игнорировать)
+    // return 0xFF; // Специальный код: "нет изменений" (можно игнорировать)
 }
 
 uint8_t checkButton() {
-
-    uint64_t status = 0;
-
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
-        status = esp_sleep_get_ext1_wakeup_status();
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    
+    // 🔹 3: Холодный старт (подача питания / нажатие RESET)
+    if (cause == ESP_SLEEP_WAKEUP_UNDEFINED) {
+        return 3;
     }
-
-    delay(10); // Дебаунс
-
-    // Проверка по статусу пробуждения ИЛИ прямое чтение пинов
-    bool b1 = (status & (1ULL << BUT1)) || (digitalRead(BUT1) == LOW);
-    bool b2 = (status & (1ULL << BUT2)) || (digitalRead(BUT2) == LOW);
-
-    if (b1) {
-        waitForButtonRelease();
-        return 1;
+    
+    // 🔹 1 или 2: Пробуждение по кнопкам (EXT1)
+    if (cause == ESP_SLEEP_WAKEUP_EXT1) {
+        uint64_t status = esp_sleep_get_ext1_wakeup_status();
+        
+        // Дебаунс: ждём стабилизации сигнала
+        delay(10);
+        
+        // Проверяем какой пин вызвал пробуждение
+        if (status & (1ULL << BUT1)) {
+            waitForButtonRelease();  // Ждём отпускания (твоя функция)
+            return 1;
+        }
+        if (status & (1ULL << BUT2)) {
+            waitForButtonRelease();
+            return 2;
+        }
     }
-    if (b2) {
-        waitForButtonRelease();
-        return 2;
-    }
-
+    
+    // 🔹 0: Таймер или другая причина (обычный рабочий цикл)
     return 0;
 }
+
+
+
+
+
+
 
 void waitForButtonRelease() {
     // Ждем HIGH на обеих кнопках (отпускания)
@@ -171,7 +178,7 @@ int readBatteryVoltage() {
 
     float v = k * raw + b;
     int vbat = (int)(v * 10);
-    Serial.printf("RAW:%i, BAT: %.3f V, int:%i \n", raw, v, vbat);
+    Serial.printf("RAW: %i, BAT: %.3f V, int: %i \n", raw, v, vbat);
     return vbat;
 }
 

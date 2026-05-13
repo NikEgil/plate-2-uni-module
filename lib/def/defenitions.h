@@ -1,10 +1,5 @@
 #pragma once
-#ifndef BOARD_REV
-#define BOARD_REV 3
-#endif
-#ifndef NET
-#define NET 1
-#endif
+
 extern const int ID;
 constexpr int uS_TO_S_FACTOR = 1000000; // Конверсия микросекунд в секунды
 constexpr int TIME_TO_SLEEP = 60 * 15;  // Время сна в секундах
@@ -21,8 +16,12 @@ struct CalPoint {
     float vbat; // Напряжение батареи (мультиметр)
 };
 // 21
-const CalPoint CAL_LOW = {.raw = 3992, .vbat = 3.522}; // Нижняя точка
-const CalPoint CAL_HIGH = {.raw = 4668, .vbat = 4.071};
+// const CalPoint CAL_LOW = {.raw = 3575, .vbat = 3.047}; // Нижняя точка
+// const CalPoint CAL_HIGH = {.raw = 4729, .vbat = 4.094};
+
+const CalPoint CAL_LOW = {.raw = 3733, .vbat = 3.047}; // Нижняя точка
+const CalPoint CAL_HIGH = {.raw = 5873, .vbat = 4.063};
+
 
 constexpr int LED_PIN = 15;
 
@@ -42,8 +41,8 @@ constexpr int REDE = 11;
 constexpr int ADC = 10;
 constexpr int BUT1 = 8;
 constexpr int BUT2 = 9;
-constexpr int SW1_PIN = 36;
-constexpr int SW2_PIN = 35;
+constexpr int SW1_PIN = 35;
+constexpr int SW2_PIN = 36;
 #elif BOARD_REV == 2 and BOARD_TYPE == 0
 constexpr int EG1 = 5;
 constexpr int EG2 = 2;

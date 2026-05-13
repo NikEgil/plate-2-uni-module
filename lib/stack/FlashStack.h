@@ -1,32 +1,37 @@
-#pragma once
-#include <Arduino.h>
-#include <LittleFS.h>
+#ifndef FLASHSTACK_H
+#define FLASHSTACK_H
 
-#define DATA_FILE   "/stack.dat"
-#define META_FILE   "/stack.meta"
-#define RECORD_SIZE 198   // <-- БЫЛО 200, СТАЛО 198
-#define MAX_DATA_MB 1.9
-#define MAX_BYTES   ((size_t)(MAX_DATA_MB * 1024 * 1024))
-#define MAX_RECORDS (MAX_BYTES / RECORD_SIZE)
-
-struct StackMeta {
-    uint32_t magic;
-    uint32_t head;
-    uint32_t tail;
-    uint16_t count;
-};
+#include <stdint.h>
+#include <stddef.h>
 
 class FlashStack {
 public:
+    static const size_t DATA_LENGTH = 198;   // длина hex-строки в байтах
+    static const size_t MAX_RECORDS = 12000;  // максимальное количество записей
+
+    FlashStack();
+
+    // Инициализация буфера. Вызывать ОДИН раз при старте (после пробуждения из сна или сброса)
     bool begin();
-    bool push(const uint8_t* data);
-    bool pop(uint8_t* outData);
-    uint16_t count();
-    void clear();
+
+    // Записать массив из DATA_LENGTH байт.
+    // При заполнении до MAX_RECORDS самая старая запись автоматически удаляется.
+    // Возвращает true при успешной записи.
+    bool write(const uint8_t *data);
+
+    // Прочитать и удалить самую старую запись.
+    // buffer должен вмещать DATA_LENGTH байт.
+    // Возвращает true, если запись прочитана, false если буфер пуст.
+    bool read(uint8_t *buffer);
+
+    // Узнать текущее число записей в буфере.
+    size_t count();
+
+    // Полная очистка буфера. Все записи удаляются.
+    bool clear();
 
 private:
-    StackMeta meta;
-    bool loadMeta();
-    bool initFresh();
-    bool saveMeta();
+    // Приватные методы будут в .cpp
 };
+
+#endif

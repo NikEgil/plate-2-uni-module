@@ -127,6 +127,8 @@ void activate(bool act) {
 
     delay(100);
 }
+
+
 bool connect(const char *apn, const char *user, const char *pass) {
     if (!isActive) {
         Serial.println("SIM not activated");
@@ -137,7 +139,7 @@ bool connect(const char *apn, const char *user, const char *pass) {
     Serial.println(modem->getModemName());
 
     // 🔹 Временно увеличиваем WDT таймаут
-    esp_task_wdt_init(60, false); // 60 сек, отключен
+    esp_task_wdt_init(360, false); // 60 сек, отключен
 
     // Ждём сеть (3 попытки по 15 сек)
     Serial.println(F("Waiting for network..."));
@@ -171,7 +173,7 @@ bool connect(const char *apn, const char *user, const char *pass) {
 
     // Подключаемся к GPRS (3 попытки)
     Serial.println(F("Connecting to GPRS..."));
-    for (int i = 1; i <= 3; i++) {
+    for (int i = 1; i < 3; i++) {
         Serial.printf("Try %d/3... ", i);
 
         yield(); // 🔹 Сброс WDT перед подключением
@@ -430,42 +432,58 @@ NetTime getNetworkTime() {
 }
 
 bool syncSystemClock() {
-    for (int attempt = 1; attempt <= 3; attempt++) {
-        NetTime nt = getNetworkTime();
-
-        // Отсекаем заводской fallback (2004) и невалидные данные
-        if (!nt.valid || nt.year < 2020) {
-            Serial.printf("[SIM] Invalid time (year %d), retry %d/3...\n",
-                          nt.year, attempt);
-            delay(5000);
-            continue;
-        }
-
-        // Конвертируем в struct tm
-        struct tm t = {0};
-        t.tm_year = nt.year - 1900;
-        t.tm_mon = nt.month - 1;
-        t.tm_mday = nt.day;
-        t.tm_hour = nt.hour;
-        t.tm_min = nt.minute;
-        t.tm_sec = nt.second;
-        t.tm_isdst = -1;
-
-        time_t ts = mktime(&t);
-
-        // ⚠️ NITZ отдаёт локальное время. Для UTC вычитаем таймзону:
-        // ts -= nt.timezone * 15 * 60;
-
-        struct timeval tv = {.tv_sec = ts, .tv_usec = 0};
-        settimeofday(&tv, nullptr);
-
-        Serial.printf("[SIM] ✓ Synced: %04d-%02d-%02d %02d:%02d:%02d\n",
-                      nt.year, nt.month, nt.day, nt.hour, nt.minute, nt.second);
-        return true;
+    // 🔹 Статика для контроля интервала между попытками
+    static uint32_t lastAttempt = 0;
+    uint32_t now = millis();
+    
+    // Проверка: прошло ли 3 секунды с последней попытки?
+    if (now - lastAttempt < 3000) {
+        return -1;  // Ещё рано, выходим сразу
     }
-
-    Serial.println("[SIM] ✗ Failed to sync after 3 attempts");
-    return false;
+    lastAttempt = now;  // Фиксируем время попытки
+    
+    // 🔹 Проверка подключения перед запросом
+    if (!modem || !modem->isGprsConnected()) {
+        Serial.println("[SIM] GPRS not connected");
+        return 0;
+    }
+    
+    // 🔹 Запрос времени (это может занять 1-3 сек, но мы не блокируем логику)
+    NetTime nt = getNetworkTime();
+    
+    // 🔹 Валидация
+    if (!nt.valid || nt.year < 2020 || nt.year > 2050) {
+        Serial.printf("[SIM] Invalid time: %04d-%02d-%02d\n", 
+                      nt.year, nt.month, nt.day);
+        return 0;  // Ошибка, но функция вернётся сразу
+    }
+    
+    // 🔹 Установка системного времени
+    struct tm t = {0};
+    t.tm_year = nt.year - 1900;
+    t.tm_mon  = nt.month - 1;
+    t.tm_mday = nt.day;
+    t.tm_hour = nt.hour;
+    t.tm_min  = nt.minute;
+    t.tm_sec  = nt.second;
+    t.tm_isdst = -1;
+    
+    time_t ts = mktime(&t);
+    if (ts < 0) {
+        Serial.println("[SIM] mktime() failed");
+        return 0;
+    }
+    
+    struct timeval tv = {.tv_sec = ts, .tv_usec = 0};
+    if (settimeofday(&tv, nullptr) != 0) {
+        Serial.println("[SIM] settimeofday() failed");
+        return 0;
+    }
+    
+    // 🔹 Успех
+    Serial.printf("[SIM] ✓ Synced: %04d-%02d-%02d %02d:%02d:%02d\n",
+                  nt.year, nt.month, nt.day, nt.hour, nt.minute, nt.second);
+    return 1;
 }
 
 time_t getTimestamp() {
@@ -491,132 +509,246 @@ void buildTopic(char *outTopic, size_t size) {
     snprintf(outTopic, size, "mqtt/devices/%s/data", IDchar);
 }
 
+// bool mqttConnect() {
+//     // 🔹 1. Проверка инициализации
+//     if (!mqtt || !client || !modem) {
+//         Serial.println("❌ MQTT components not initialized");
+//         return false;
+//     }
+
+//     // Уже подключены — выходим
+//     if (mqtt->connected()) {
+//         Serial.println("✅ Already connected");
+//         return true;
+//     }
+
+//     // 🔹 2. Проверка GPRS перед MQTT
+//     if (!modem->isGprsConnected()) {
+//         Serial.println("⚠️ GPRS not connected, skipping MQTT");
+//         return false;
+//     }
+
+//     // 🔹 3. Перенастройка клиента (без пересоздания!)
+//     mqtt->setServer(broker, 1883);
+//     mqtt->setSocketTimeout(15); // Таймаут сокета
+//     mqtt->setKeepAlive(60);     // Пинг каждые 60 сек
+//     mqtt->setBufferSize(512);   // Буфер под пакет
+
+//     // 🔹 4. Чистый сокет перед подключением
+//     if (client->connected()) {
+//         Serial.println("Closing stale socket...");
+//         client->stop();
+//         delay(100);
+//         yield(); // Сброс аппаратного WDT
+//     }
+
+//     // 🔹 5. Отладочная информация
+//     Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(),
+//                   modem->getLocalIP().c_str());
+//     Serial.print("Connecting MQTT...");
+//     Serial.flush(); // Гарантируем вывод до блокировки
+
+//     // 🔹 6. Отключаем Task WDT на время подключения
+//     esp_task_wdt_init(60, false); // 60 сек, выключен
+//     delay(10);
+
+//     // 🔹 7. ОДНА попытка подключения (не цикл!)
+//     Serial.print("[attempting]");
+//     Serial.flush();
+
+//     unsigned long start = millis();
+//     bool status = mqtt->connect(IDchar, IDchar, pass);
+//     unsigned long elapsed = millis() - start;
+
+//     Serial.printf("[done in %lu ms] ", elapsed);
+
+//     // 🔹 8. Включаем WDT обратно СРАЗУ после connect()
+//     esp_task_wdt_init(8, true);
+//     yield();
+
+//     // 🔹 9. Успех
+//     if (status) {
+//         Serial.println("✅ SUCCESS");
+//         mqtt->loop(); // Обработка входящих
+//         return true;
+//     }
+
+//     // 🔹 10. Диагностика ошибки
+//     int rc = mqtt->state();
+//     Serial.printf("FAILED (rc=%d)\n", rc);
+
+//     switch (rc) {
+//     case -4:
+//         Serial.println("  → Connection refused (check credentials)");
+//         break;
+//     case -3:
+//         Serial.println("  → Connection lost (network unstable)");
+//         break;
+//     case -2:
+//         Serial.println("  → Connection lost during handshake");
+//         break;
+//     case -1:
+//         Serial.println("  → Connection failed (broker unreachable)");
+//         break;
+//     case 1:
+//         Serial.println("  → Connected but protocol error");
+//         break;
+//     case 2:
+//         Serial.println("  → Invalid client ID");
+//         break;
+//     case 3:
+//         Serial.println("  → Server unavailable");
+//         break;
+//     case 4:
+//         Serial.println("  → Bad username/password");
+//         break;
+//     case 5:
+//         Serial.println("  → Not authorized");
+//         break;
+//     default:
+//         Serial.printf("  → Unknown error: %d\n", rc);
+//         break;
+//     }
+
+//     // 🔹 11. Восстановление состояния клиента (без пересоздания!)
+//     // При ошибках -1/-2/-3 сбрасываем сокет и параметры
+//     if (rc == -1 || rc == -2 || rc == -3) {
+//         Serial.println("  → Resetting client state...");
+
+//         // Закрываем сокет
+//         if (client->connected()) {
+//             client->stop();
+//             delay(100);
+//         }
+
+//         // Перенастраиваем (те же параметры, что в begin)
+//         mqtt->setServer(broker, 1883);
+//         mqtt->setSocketTimeout(15);
+//         mqtt->setKeepAlive(60);
+//         mqtt->setBufferSize(512);
+
+//         Serial.println("  → Client state reset");
+//         delay(200);
+//         yield();
+//     }
+
+//     // 🔹 12. Проверка памяти после попытки
+//     Serial.printf("Heap after: %d bytes\n", ESP.getFreeHeap());
+
+//     return false;
+// }
+
+
 bool mqttConnect() {
+    Serial.println("        try mqtt conect");
     // 🔹 1. Проверка инициализации
     if (!mqtt || !client || !modem) {
         Serial.println("❌ MQTT components not initialized");
         return false;
     }
 
-    // Уже подключены — выходим
     if (mqtt->connected()) {
         Serial.println("✅ Already connected");
         return true;
     }
 
-    // 🔹 2. Проверка GPRS перед MQTT
+    // 🔹 2. Проверка GPRS
     if (!modem->isGprsConnected()) {
         Serial.println("⚠️ GPRS not connected, skipping MQTT");
         return false;
     }
 
-    // 🔹 3. Перенастройка клиента (без пересоздания!)
+    // 🔹 3. Настройка клиента
     mqtt->setServer(broker, 1883);
-    mqtt->setSocketTimeout(15); // Таймаут сокета
-    mqtt->setKeepAlive(60);     // Пинг каждые 60 сек
-    mqtt->setBufferSize(512);   // Буфер под пакет
+    mqtt->setSocketTimeout(10);   // 🔹 Уменьшаем до 10 сек
+    mqtt->setKeepAlive(60);
+    mqtt->setBufferSize(512);
 
-    // 🔹 4. Чистый сокет перед подключением
+    // 🔹 4. Чистый сокет
     if (client->connected()) {
         Serial.println("Closing stale socket...");
         client->stop();
-        delay(100);
-        yield(); // Сброс аппаратного WDT
-    }
-
-    // 🔹 5. Отладочная информация
-    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(),
-                  modem->getLocalIP().c_str());
-    Serial.print("Connecting MQTT...");
-    Serial.flush(); // Гарантируем вывод до блокировки
-
-    // 🔹 6. Отключаем Task WDT на время подключения
-    esp_task_wdt_init(60, false); // 60 сек, выключен
-    delay(10);
-
-    // 🔹 7. ОДНА попытка подключения (не цикл!)
-    Serial.print("[attempting]");
-    Serial.flush();
-
-    unsigned long start = millis();
-    bool status = mqtt->connect(IDchar, IDchar, pass);
-    unsigned long elapsed = millis() - start;
-
-    Serial.printf("[done in %lu ms] ", elapsed);
-
-    // 🔹 8. Включаем WDT обратно СРАЗУ после connect()
-    esp_task_wdt_init(8, true);
-    yield();
-
-    // 🔹 9. Успех
-    if (status) {
-        Serial.println("✅ SUCCESS");
-        mqtt->loop(); // Обработка входящих
-        return true;
-    }
-
-    // 🔹 10. Диагностика ошибки
-    int rc = mqtt->state();
-    Serial.printf("FAILED (rc=%d)\n", rc);
-
-    switch (rc) {
-    case -4:
-        Serial.println("  → Connection refused (check credentials)");
-        break;
-    case -3:
-        Serial.println("  → Connection lost (network unstable)");
-        break;
-    case -2:
-        Serial.println("  → Connection lost during handshake");
-        break;
-    case -1:
-        Serial.println("  → Connection failed (broker unreachable)");
-        break;
-    case 1:
-        Serial.println("  → Connected but protocol error");
-        break;
-    case 2:
-        Serial.println("  → Invalid client ID");
-        break;
-    case 3:
-        Serial.println("  → Server unavailable");
-        break;
-    case 4:
-        Serial.println("  → Bad username/password");
-        break;
-    case 5:
-        Serial.println("  → Not authorized");
-        break;
-    default:
-        Serial.printf("  → Unknown error: %d\n", rc);
-        break;
-    }
-
-    // 🔹 11. Восстановление состояния клиента (без пересоздания!)
-    // При ошибках -1/-2/-3 сбрасываем сокет и параметры
-    if (rc == -1 || rc == -2 || rc == -3) {
-        Serial.println("  → Resetting client state...");
-
-        // Закрываем сокет
-        if (client->connected()) {
-            client->stop();
-            delay(100);
-        }
-
-        // Перенастраиваем (те же параметры, что в begin)
-        mqtt->setServer(broker, 1883);
-        mqtt->setSocketTimeout(15);
-        mqtt->setKeepAlive(60);
-        mqtt->setBufferSize(512);
-
-        Serial.println("  → Client state reset");
-        delay(200);
+        delay(50);
         yield();
     }
 
-    // 🔹 12. Проверка памяти после попытки
-    Serial.printf("Heap after: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(), 
+                  modem->getLocalIP().c_str());
+    Serial.print("Connecting MQTT...");
+    Serial.flush();
 
+    // 🔹 5. Программный таймаут на connect()
+    const uint32_t CONNECT_TIMEOUT = 15000;  // 15 секунд максимум
+    unsigned long connectStart = millis();
+    bool status = false;
+
+    // 🔹 Отключаем WDT, но с лимитом по времени
+    esp_task_wdt_init(30, false);
+    delay(10);
+
+    Serial.print("[attempting]");
+    Serial.flush();
+
+    // 🔹 6. Вызов connect() с периодическим обслуживанием GPRS
+    while (millis() - connectStart < CONNECT_TIMEOUT) {
+        yield();                    // Сброс аппаратного WDT
+        modem->maintain();          // 🔹 Критично: поддержка GPRS-стека TinyGSM
+        
+        // Пробуем подключиться (PubSubClient вернёт сразу, если есть ответ)
+        status = mqtt->connect(IDchar, IDchar, pass);
+        if (status) break;
+        
+        // Даём время на обработку сетевых событий
+        delay(100);
+        Serial.print(".");
+        Serial.flush();
+    }
+
+    unsigned long elapsed = millis() - connectStart;
+    Serial.printf("[done in %lu ms] ", elapsed);
+
+    // 🔹 7. Включаем WDT обратно
+    esp_task_wdt_init(8, true);
+    yield();
+
+    // 🔹 8. Успех
+    if (status) {
+        Serial.println("✅ SUCCESS");
+        mqtt->loop();
+        return true;
+    }
+
+    // 🔹 9. Диагностика
+    int rc = mqtt->state();
+    Serial.printf("FAILED (rc=%d)\n", rc);
+
+    switch(rc) {
+        case -4: Serial.println("  → Connection refused"); break;
+        case -3: Serial.println("  → Connection lost"); break;
+        case -2: Serial.println("  → Connection lost during handshake"); break;
+        case -1: Serial.println("  → Connection failed"); break;
+        case  1: Serial.println("  → Protocol error"); break;
+        case  2: Serial.println("  → Invalid client ID"); break;
+        case  3: Serial.println("  → Server unavailable"); break;
+        case  4: Serial.println("  → Bad credentials"); break;
+        case  5: Serial.println("  → Not authorized"); break;
+        default: Serial.printf("  → Unknown error: %d\n", rc); break;
+    }
+
+    // 🔹 10. Сброс состояния при сетевых ошибках
+    if (rc == -1 || rc == -2 || rc == -3) {
+        Serial.println("  → Resetting client state...");
+        if (client->connected()) {
+            client->stop();
+            delay(50);
+        }
+        mqtt->setServer(broker, 1883);
+        mqtt->setSocketTimeout(10);
+        delay(100);
+        yield();
+    }
+
+    Serial.printf("Heap after: %d bytes\n", ESP.getFreeHeap());
     return false;
 }
 
@@ -638,10 +770,10 @@ bool mqttSendPacket(const uint8_t *payload, size_t length) {
 }
 
 void mqttdisconnect() {              // ← исправил опечатку в имени
-    if (mqtt && mqtt->connected()) { // ← mqtt->
+    // if (mqtt && mqtt->connected()) { // ← mqtt->
         mqtt->disconnect();          // ← mqtt->
         Serial.println("mqtt disconected");
-    }
+    // }
 }
 } // namespace SimModule
 #endif

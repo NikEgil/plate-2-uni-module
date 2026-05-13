@@ -129,7 +129,7 @@
             },
             {
                 "byte": 2,
-                "name": "lighting_power_deviation",
+                "name": "lighting_power_dev",
                 "coef": 1
             }
         ],
@@ -153,17 +153,17 @@
         "36": [
             {
                 "byte": 1,
-                "name": "temperature_x10",
+                "name": "air_temperature",
                 "coef": 0.1
             },
             {
                 "byte": 2,
-                "name": "humidity",
+                "name": "air_humidity",
                 "coef": 1
             },
             {
                 "byte": 3,
-                "name": "pressure_x10",
+                "name": "air_pressure",
                 "coef": 0.1
             },
             {
@@ -188,12 +188,12 @@
             },
             {
                 "byte": 8,
-                "name": "light_div5",
+                "name": "illumination",
                 "coef": 1
             },
             {
                 "byte": 9,
-                "name": "rainfall_x100",
+                "name": "rainfall",
                 "coef": 0.01
             }
         ]

@@ -1,5 +1,6 @@
 #include "FlashStack.h"
 #include <Arduino.h>
+
 #if BOARD_REV == 2
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -83,30 +84,16 @@ int Battery = 146;
 byte tableSens[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
 byte ccid[10] = {};
 int signalp = 0;
-void cleanUpStack() {
-    if (!LittleFS.begin()) {
-        Serial.println("LittleFS mount failed");
-        return;
-    }
 
-    // 🔹 2. Удаляем старые файлы стека (выполнить ОДИН РАЗ после смены
-    // RECORD_SIZE)
-    if (LittleFS.exists("/stack.dat")) {
-        Serial.println("🗑 Removing old stack.dat (RECORD_SIZE changed)");
-        LittleFS.remove("/stack.dat");
-    }
-    if (LittleFS.exists("/stack.meta")) {
-        Serial.println("🗑 Removing old stack.meta");
-        LittleFS.remove("/stack.meta");
-    }
-    LittleFS.format();
-    // 🔹 3. Инициализируем стек с новыми настройками
-    if (stack.begin()) {
-        Serial.printf("✅ Stack initialized. RECORD_SIZE=%d, count=%d\n",
-                      RECORD_SIZE, stack.count());
-    }
-    blink(2, 750);
+void cleanUpStack() {
+    Serial.println(F("🧹 Cleaning stack..."));
+
+    // 🔹 stack.clear() сам вызовет LittleFS.end()/begin() при необходимости
+    stack.clear();
+
+    Serial.println(F("✅ Stack cleared"));
 }
+
 #if BOARD_TYPE == 0
 bool searche_multisens() {
     Serial.println("founding multisens");
@@ -132,7 +119,7 @@ bool searche_multisens() {
 }
 
 bool searchSensors(int port) {
-    digitalWrite(LED_PIN, HIGH);
+    blink(1, 1000);
     enable_power(true);
     Serial.printf("			Search sensors, port	%i\n", port);
     enable_sens(port);
@@ -146,15 +133,15 @@ bool searchSensors(int port) {
     }
     delay(1000);
 
-    // if (searche_multisens()) {
-    //     tableSens[port] = 0x01;
-    //     saveArrayToFlash(tableSens);
-    //     blink(1, 1000);
-    //     return true;
-    // }
+    if (searche_multisens()) {
+        tableSens[port] = 0x01;
+        saveArrayToFlash(tableSens);
+        blink(1, 1000);
+        return true;
+    }
     Serial.println("founding sens");
 
-    // Serial.println("	request:");
+    Serial.println("	request:");
     byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
 
     int lenreq = 8;
@@ -165,25 +152,26 @@ bool searchSensors(int port) {
     byte response[32] = {0};
     // Ждём ответ 150 мс (для Modbus обычно хватает 50-100 мс)
     size_t lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
-    // Serial.println("	responses:");
+    Serial.println("	responses:");
     printHEX(response, lenresponse);
 
-    // if (response[0] == 0x00) {
-    //     Serial.println("	wait meteo:");
-    //     for (int i = 0; i < 80; i++) {
-    //         delay(250);
-    //         lenresponse = RsModbus::receiveData(response, sizeof(response),
-    //         10); printHEX(response, lenresponse); if (response[0] != 0) {
-    //             break;
-    //         }
-    //     }
-    // }
+    if (response[0] == 0x00) {
+        Serial.println("	wait meteo:");
+        for (int i = 0; i < 80; i++) {
+            delay(250);
+            lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
+            printHEX(response, lenresponse);
+            if (response[0] != 0) {
+                break;
+            }
+        }
+    }
 
     Serial.printf("%i		FOUND		!!!\n", (int)response[0]);
     if (response[0] == 0x24) {
         Serial.println("meteostation detected");
     } else if (response[0] != 0x00) {
-        // Serial.println("another sens detected");
+        Serial.println("another sens detected");
     } else {
         Serial.println("		NOT SENS	!!!");
     }
@@ -191,10 +179,8 @@ bool searchSensors(int port) {
     tableSens[port] = response[0];
     saveArrayToFlash(tableSens);
     enable_sens(0);
-    enable_power(0);
-    digitalWrite(LED_PIN, LOW);
+    // enable_power(0);
     if (response[0] != 0x00) {
-
         blink((int)response[0], 100);
         return true;
     } else {
@@ -252,7 +238,7 @@ struct MeasureResult {
     size_t length; // Длина в байтах
     bool valid;    // Флаг успеха (память выделена + опрос прошёл)
 };
-#if BOAD_REV == 3
+#if BOARD_REV == 3
 MeasureResult measure(int port) {
     MeasureResult res = {nullptr, 0, false};
     digitalWrite(LED_PIN, HIGH);
@@ -463,47 +449,44 @@ void dataPrepare() {
         memset(packet + len, 0x00, 198 - len);
     }
     // 4. Вывод (для отладки печатаем только валидную часть, или все 200)
-    Serial.printf("Total packed length: %d bytes\n", len);
+    Serial.printf("Total packed length: %d bytes\n", len + 2);
     packet[0] = (byte)(len + 2);
     addCRC(packet, len, packet);
     printHEX(packet, len + 2);
     yield();
-    if (stack.push(packet)) {
+    if (stack.write(packet)) {
         Serial.printf("   ✅ Pushed packet (count: %d)\n", stack.count());
     } else {
         Serial.printf("   ❌ Failed to push packet #%d (stack full?)\n",
                       stack.count());
     }
+    Serial.printf("   STACK count: %d)\n", stack.count());
+
     yield();
     enable_sens(0);
-    enable_power(0);
 }
 
 void Stack_and_sensors() {
     Serial.println(">>> Action 2 (GPIO 9)");
-    blink(2, 1500);
-    cleanUpStack();
+    // blink(2, 1500);
     searchSensors(activeport[0]);
     searchSensors(activeport[1]);
 }
 #endif
+
 #if NET == 1 or NET == 2
 void getNetTime() {
-
     Serial.println("Enabling time sync...");
     if (SimModule::enableTimeSync()) {
     }
-    delay(2000); // Ждём NITZ-обновление от вышки
-    for (int i = 0; i < 6; i++) {
+    delay(4000); // Ждём NITZ-обновление от вышки
+    for (int i = 0; i < 3; i++) {
         if (SimModule::syncSystemClock()) {
             Serial.println("✓ Time ready");
             blink(2, 1000);
             break;
-        } else {
-            delay(5000);
         }
     }
-
     printCurrentTime();
 }
 
@@ -514,6 +497,7 @@ bool sim_activate(bool act) {
         enable_power(true);
         delay(2000);
         enable_sim(true);
+        delay(2000);
         // enable_sens(0);
         SimModule::begin();
         SimModule::activate(true);
@@ -538,6 +522,7 @@ bool sim_activate(bool act) {
     } else {
         // if (SimModule::isConnection()) {
         SimModule::disconnect();
+        SimModule::activate(false);
         // }
         enable_sim(false);
         enable_power(false);
@@ -574,6 +559,21 @@ void SIM_check_signal() {
     }
     sim_activate(false);
 }
+void SIM_reset() {
+    enable_power(1);
+    enable_sim(1);
+    delay(5000);
+    SimModule::begin();
+    SimModule::activate(true);
+
+    // Сброс к заводским (опционально, только при проблемах)
+    if (SimModule::factoryReset()) {
+        Serial.println("Modem reset done. Reconnecting...");
+    }
+    enable_sim(0);
+
+    enable_power(0);
+}
 
 int adding() {
     memset(a_packet, 0, 250);
@@ -607,7 +607,7 @@ bool mqtt_send() {
         Serial.printf("packets to sending -  %i\n", l);
         for (int i = 0; i < l; i++) {
             yield();
-            if (stack.pop(g_packet)) {
+            if (stack.read(g_packet)) {
                 Serial.printf("    Popped packet #%d\n", i);
                 printHEX(g_packet, (int)g_packet[0] + 1);
                 int len = adding();
@@ -617,7 +617,7 @@ bool mqtt_send() {
                     Serial.printf("   ✅ packet #%d sended\n", i);
                     blink(1, 500);
                 } else {
-                    stack.push(g_packet);
+                    stack.write(g_packet);
                     SimModule::mqttdisconnect();
                     return false;
                 }
@@ -632,11 +632,13 @@ bool mqtt_send() {
 
     } else {
         blink(10, 250);
+        SimModule::mqttdisconnect();
         return false;
     }
 }
+#endif
 
-#elif NET == 0 or NET == 2
+#if NET == 0 or NET == 2
 void lora_activate(bool act) {
     if (act) {
         enable_lora(1);
@@ -662,19 +664,15 @@ void LORA_sendOK() {
 
     LoRa::send(pac, 10);
 }
-void lora_send(int l = 0) {
+void lora_send() {
     yield();
     bool da = false;
     lora_activate(true);
-    // int l = stack.count();
-    if (stack.count() > 5) {
-        l = 5;
-    } else {
-        l = stack.count();
-    }
-    Serial.printf("всего пакетов %i\n", l);
+    int l = stack.count();
+
+    Serial.printf(" STACK COUNT - %i\n", l);
     for (int i = 0; i < l; i++) {
-        if (stack.pop(g_packet)) {
+        if (stack.read(g_packet)) {
             Serial.printf("   ✅ Popped packet #%d\n", i);
             printHEX(g_packet, (int)g_packet[0]);
             int len = 0;
@@ -703,9 +701,9 @@ void lora_send(int l = 0) {
                                 blink(1, 2000);
                                 da = true;
                                 break;
-                            } else {
-                                break;
                             }
+                        } else {
+                            break;
                         }
                     } else {
                         Serial.print('.');
@@ -717,8 +715,9 @@ void lora_send(int l = 0) {
             Serial.printf("   ❌ Failed to pop packet #%d (stack empty?)\n", i);
         }
         if (!da) {
-            Serial.printf("   ❌ Failed sending");
-            stack.push(g_packet);
+            Serial.printf("   ❌ Failed sending\n");
+            stack.write(g_packet);
+            Serial.printf("Stack count %i", stack.count());
             blink(10, 250);
             yield();
             lora_activate(false);
@@ -780,7 +779,12 @@ void lora_check_signal() {
     pac[0] = (byte)(len);
 
     lora_activate(true);
-    if (LoRa::configSet(17, 1)) {
+
+    int ch = readSwitchState() + 1;
+    Serial.printf("Chanel set %i\n", ch);
+    blink(ch, 400);
+
+    if (LoRa::configSet(17, ch)) {
         LoRa::configGet();
     }
     int rssi = lora_rssi(pac);
@@ -806,7 +810,27 @@ void lora_check_signal() {
 }
 #endif
 
+RTC_DATA_ATTR int wakeups = 0;
+
 #if BOARD_TYPE == 0 and NET == 1
+
+void work(int c) {
+    if (tableSens[activeport[0]] != 0x00 or tableSens[activeport[1]] != 0x00) {
+        dataPrepare();
+        enable_sens(0);
+        if (stack.count() >= c) {
+            if (sim_activate(true)) {
+                Serial.println("coneceted do mqtt");
+                mqtt_send();
+                sim_activate(false);
+            }
+        }
+        enable_power(0);
+    } else {
+        blink(10, 100);
+    }
+}
+
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
@@ -836,25 +860,26 @@ void setup() {
 
     uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
-
+    byte simpl[] = {0x00, 0x00, 0x00, 0x00, 0x00};
     switch (wake_but) {
     case 1:
         SIM_check_signal();
         break;
-
     case 2:
         Stack_and_sensors();
         break;
+    case 3:
+        // saveArrayToFlash(simpl);
+        Stack_and_sensors();
+        // searchSensors(activeport[0]);
+        // sim_activate(1);
+        // SIM_reset();l;
+
+        SIM_check_signal();
+        sleep(10);
+        break;
     default:
-        // Stack_and_sensors();
-        dataPrepare();
-        if (sim_activate(true)) {
-            Serial.println("coneceted do mqtt");
-            mqtt_send();
-            sim_activate(false);
-            enable_sens(0);
-            enable_power(0);
-        }
+        work(1);
         Serial.println("            complited");
         break;
     }
@@ -872,6 +897,11 @@ void setup() {
         }
     }
     Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
+    uint32_t cpu_mhz = getCpuFrequencyMhz(); // частота CPU в МГц
+    uint32_t apb_mhz = getApbFrequency();    // частота шины APB (обычно 80 МГц)
+
+    Serial.printf("CPU Frequency: %u MHz\n", cpu_mhz);
+    Serial.printf("APB Frequency: %u Hz\n", apb_mhz);
     Battery = readBatteryVoltage();
     RsModbus::init(REDE);
     delay(1000);
@@ -882,54 +912,59 @@ void setup() {
         saveArrayToFlash(tableSens);
     }
 
+    uint8_t wake_but = checkButton();
+
     if (stack.begin()) {
-        Serial.printf("✅ Stack initialized. Current records: %d\n",
-                      stack.count());
+        Serial.printf("STACK OK, count %i\n", stack.count());
     } else {
-        Serial.println("❌ Failed to init FlashStack!");
+        Serial.println("Ошибка: раздел flashbuf не найден!");
     }
 
-    uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
-
+    byte pac[198] = {0};
+    int q = 0;
     switch (wake_but) {
     case 1:
         lora_check_signal();
+        sleep(10);
         break;
     case 2:
         Stack_and_sensors();
+        sleep(10);
+        break;
+    case 3:
+        Serial.println("work first");
+        if (stack.clear()) {
+            Serial.println("stack cleared");
+        }
+        delay(200);
+        lora_check_signal();
+        searchSensors(1);
+        searchSensors(4);
+
+        enable_sens(0);
+        enable_power(0);
+        sleep(10);
         break;
     default:
-        // lora_check_signal();
         dataPrepare();
+        enable_sens(0);
+        enable_power(0);
         lora_send();
-
         Serial.println("            complited");
         Serial.println("one run");
         break;
     }
-    // sleep(30);
+
+    // sleep(10);
     sleep(TIME_TO_SLEEP);
 }
 void loop() {}
 #elif BOARD_TYPE == 1 and BOARD_REV == 3
 
-void SIM_reset() {
-    enable_power(1);
-    enable_sim(1);
-    delay(5000);
-    SimModule::begin();
-    SimModule::activate(true);
-
-    // Сброс к заводским (опционально, только при проблемах)
-    if (SimModule::factoryReset()) {
-        Serial.println("Modem reset done. Reconnecting...");
-    }
-    enable_power(0);
-    enable_sim(0);
-}
 static uint32_t lastWorkTime = 0;
-const uint32_t WORK_INTERVAL = 30UL * 60 * 1000; // 20 минут
+static uint32_t lastSleepTime = 0;
+const uint32_t WORK_INTERVAL = 30UL * 60 * 1000; // 30 минут
 int iter = 0;
 
 void work() {
@@ -946,9 +981,12 @@ void work() {
             Serial.println("    ✅ SENDING COMLITE");
         } else {
             Serial.println("   ❌ SENDING FAIL");
+            sim_activate(false);
+
+            sleep(10);
         }
-        sim_activate(false);
     }
+    sim_activate(false);
     lora_activate(true);
 }
 
@@ -962,16 +1000,15 @@ void setup() {
     }
 
     Battery = readBatteryVoltage();
+    uint32_t cpu_mhz = getCpuFrequencyMhz(); // частота CPU в МГц
+    uint32_t apb_mhz = getApbFrequency();    // частота шины APB (обычно 80 МГц)
+
+    Serial.printf("CPU Frequency: %u MHz\n", cpu_mhz);
+    Serial.printf("APB Frequency: %u Hz\n", apb_mhz);
+
     esp_reset_reason_t reason = esp_reset_reason();
     Serial.printf("⚠️ Last reset: %d (4=WDT, 5=Brownout)\n", reason);
     Serial.printf("Rev: %d, NET: %d\n", BOARD_REV, NET);
-    int b = checkButton();
-    if (b == 1) {
-        SIM_check_signal();
-    }
-    if (b == 2) {
-        cleanUpStack();
-    }
 
     if (stack.begin()) {
         Serial.printf("✅ Stack initialized. Current records: %d\n",
@@ -979,11 +1016,35 @@ void setup() {
     } else {
         Serial.println("❌ Failed to init FlashStack!");
     }
-    blink(5, 750);
+    int b = checkButton();
+    Serial.printf("     STATE WAKE UP %i\n", b);
+    if (b == 1) {
+        // SIM_check_signal();
+    }
+    if (b == 2) {
+        // cleanUpStack();
+    }
+    if (b == 3) {
+
+        cleanUpStack();
+        lora_activate(true);
+        int ch = readSwitchState() + 1;
+        Serial.printf("Chanel set %i\n", ch);
+        blink(ch, 400);
+        if (LoRa::configSet(17, 1)) {
+            LoRa::configGet();
+        }
+        lora_activate(0);
+        SIM_check_signal();
+        enable_sim(0);
+        enable_power(0);
+    }
+
+    blink(2, 750);
     uint32_t now = millis();
 
     lastWorkTime = now;
-
+    lastSleepTime = now;
     lora_activate(true);
 }
 
@@ -1005,7 +1066,7 @@ void loop() {
             memset(packet, 0, sizeof(g_packet));
             memcpy(packet, rxBuffer, len);
 
-            if (stack.push(packet)) {
+            if (stack.write(packet)) {
                 Serial.printf("pushed len %i, count %i\n", len, stack.count());
             }
         }
@@ -1015,12 +1076,14 @@ void loop() {
         }
         digitalWrite(LED_PIN, LOW);
     }
-
     uint32_t now = millis();
     bool timeExpired = (now - lastWorkTime >= WORK_INTERVAL);
-
+    bool timework = (now - lastSleepTime >= WORK_INTERVAL * 2.1);
     // Запускаем work(), если сработал триггер И прошла минимальная пауза
-    if (stack.count() > 0 and timeExpired) {
+    if ((stack.count() > 0 and timeExpired) or
+        (stack.count() > 0 and digitalRead(BUT2) == LOW)) {
+        blink(2, 750);
+
         Serial.printf("stack count %i timeExpired %i \n", stack.count(),
                       timeExpired);
         // Сбрасываем отсчёт
@@ -1028,8 +1091,12 @@ void loop() {
         work(); // Блокирующий вызов SIM800
         Serial.println("️        END work()...");
         lastWorkTime = now;
+        blink(2, 750);
     }
-
+    if (timework) {
+        lastSleepTime = now;
+        sleep(30);
+    }
     delay(10);
     yield();
 }
@@ -1120,20 +1187,20 @@ void loop() {
         int b = (int)(((readBatteryVoltage() - 25) * 100) / 18);
         Serial.printf("\n\nBattery  %i %%\n", b);
 
-        MeasureResult mRes= {nullptr, 0, false};
-        if (bat == 2 and tableSens[1]!=0x00) {
+        MeasureResult mRes = {nullptr, 0, false};
+        if (bat == 2 and tableSens[1] != 0x00) {
             // MeasureResult res = {nullptr, 0, false};
             mRes = measure(1); // или другой порт
             // Serial.printf("Port %d: valid=%d, data=%p, len=%d\n",
             // mRes.valid,mRes.data, mRes.length);
         }
-        if (bat == 1 and tableSens[4]!=0x00) {
+        if (bat == 1 and tableSens[4] != 0x00) {
             mRes = measure(4); // или другой порт
             // Serial.printf("Port %d: valid=%d, data=%p, len=%d\n",
             // mRes.valid,mRes.data, mRes.length);
         }
         printHEX(mRes.data, mRes.length);
-        if (mRes.valid and  mRes.data[1] == 0x1E) {
+        if (mRes.valid and mRes.data[1] == 0x1E) {
             Serial.printf("🌡️\tAir temperature - %.1f °C\n",
                           bytesToInt(mRes.data[6], mRes.data[7]) / 10);
             Serial.printf("💧\tAir humidity - %.1f %% \n",
@@ -1142,7 +1209,7 @@ void loop() {
                           bytesToInt(mRes.data[8], mRes.data[9]));
         }
 
-        if (mRes.valid and  mRes.data[1] == 0x07) {
+        if (mRes.valid and mRes.data[1] == 0x07) {
             Serial.printf("🌡️\tSoil temperature - %.1f °C\n",
                           bytesToInt(mRes.data[6], mRes.data[7]) / 10);
             Serial.printf("💧\tSoil humidity - %.1f %% \n",
@@ -1150,7 +1217,7 @@ void loop() {
             Serial.printf("⚡\tConductivity - %.0f us/cm\n",
                           bytesToInt(mRes.data[8], mRes.data[9]));
             Serial.printf("🧪\tpH - %.1f \n",
-                          bytesToInt(mRes.data[10], mRes.data[11]/100) );
+                          bytesToInt(mRes.data[10], mRes.data[11] / 100));
             // Serial.printf("🌾 Nitrogen (N) - %.0f us/cm\n",
             //               bytesToInt(mRes.data[12], mRes.data[13]) );
             // Serial.printf("🌻 Phosphorus (P) - %.0f us/cm\n",

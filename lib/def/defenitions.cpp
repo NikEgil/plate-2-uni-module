@@ -1,7 +1,7 @@
 #include <defenitions.h>
 
 const int activeport[] = {1, 4};
-const int ID = 20001;
+const int ID = 100003;
 
 #if NET>0
 const char *apn = "m2m.mts.ru"; // Access Point Name
@@ -10,8 +10,8 @@ const char *gprsPass = "mts";   // GPRS password (if required)
 // 158.160.240.169
 const char *broker = "158.160.240.169";
 
-const char *IDchar = "00020001";
-const char *pass = "FISI00020001";
+const char *IDchar = "00000021";
+const char *pass = "GMSL00000021";
                     
 #endif
 
