@@ -1,0 +1,61 @@
+
+'temp_air': {'title': "Температура воздуха",
+        "unit": "°C"
+    },
+    'hum_air': {'title': "Влажность воздуха",
+        "unit": "%"
+    },
+    'pressure_hpa': {'title': "Давление",
+        "unit": "гПа"
+    },
+    'pressure_mmhg': {'title': "Давление",
+        "unit": "мм рт. ст."
+    },
+    'wind_speed': {'title': "Скорость ветра",
+        "unit": "м/с"
+    },
+    'wind_gust': {'title': "Порыв ветра",
+        "unit": "м/с"
+    },
+    'uv_intensity': {'title': "Интенсивность УФ",
+        "unit": "Вт/м²"
+    },   # при желании поменяйте на мВт/см²
+    'uv_index': {'title': "Индекс УФ",
+        "unit": ""
+    },        # безразмерная величина
+    'illuminance': {'title': "Освещённость",
+        "unit": "лк"
+    },
+    'rainfall': {'title': "Количество осадков",
+        "unit": "мм"
+    },
+    'temp_soil_10': {'title': "Температура почвы",
+        "unit": "°C"
+    },
+    'hum_soil_10': {'title': "Влажность почвы",
+        "unit": "%"
+    },
+    'temperature': {'title': "Температура почвы",
+        "unit": "°C"
+    },
+    'moisture': {'title': "Влажность почвы",
+        "unit": "%"
+    },
+    'soil_conductivity': {'title': "Электропроводность",
+    "unit": "мС/см"
+},
+
+'soil_ph': {'title': "уровень pH",
+"unit": ""
+}, #безразмерная величина
+
+'soil_nitrogen': {'title': "отклонение содержания Азота",
+"unit": "мг/кг"
+},
+'soil_phosphorus': {'title': "отклонение содержания Фосфора",
+"unit": "мг/кг"
+},
+'soil_potassium': {'title': "отклонение содержания Калия",
+"unit": "мг/кг"
+},
+

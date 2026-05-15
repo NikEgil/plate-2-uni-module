@@ -1,10 +1,33 @@
 #include <defenitions.h>
-
 const int activeport[] = {1, 4};
-const int ID = 100003;
+const int ID = 10006; // ваша глобальная переменная
 
-#if NET>0
-const char *apn = "m2m.mts.ru"; // Access Point Name
+// Глобальные константы, инициализированные в зависимости от ID
+const CalPoint CAL_LOW = (ID == 21)      ? CalPoint{3575, 3.047}
+                         : (ID == 20002) ? CalPoint{3741, 3.225}
+
+                         : (ID == 10001) ? CalPoint{3741, 3.225}
+                         : (ID == 10002) ? CalPoint{3829, 3.225}
+                         : (ID == 10003) ? CalPoint{3722, 3.212}
+                         : (ID == 10004) ? CalPoint{3952, 3.262}
+                         : (ID == 10005) ? CalPoint{3809, 3.286}
+                         : (ID == 10006) ? CalPoint{3697, 3.264}
+                                         : CalPoint{0, 3};
+
+const CalPoint CAL_HIGH = (ID == 21)      ? CalPoint{4729, 4.094}
+                          : (ID == 20002) ? CalPoint{6244, 4.093}
+
+                          : (ID == 1000)  ? CalPoint{6061, 4.092}
+                          : (ID == 10002) ? CalPoint{6960, 4.126}
+                          : (ID == 10003) ? CalPoint{5458, 4.03}
+                          : (ID == 10004) ? CalPoint{4670, 3.851}
+                          : (ID == 10005) ? CalPoint{6929, 4.14}
+                          : (ID == 10006) ? CalPoint{6198, 4.062}
+
+                                          : CalPoint{1, 4};
+
+#if NET > 0
+const char *apn = "m2m.mts.ru"; // Access Point Name   
 const char *gprsUser = "mts";   // GPRS username (if required)
 const char *gprsPass = "mts";   // GPRS password (if required)
 // 158.160.240.169
@@ -12,15 +35,13 @@ const char *broker = "158.160.240.169";
 
 const char *IDchar = "00000021";
 const char *pass = "GMSL00000021";
-                    
+
 #endif
 
 const int sensReg[] = {
-    10, 2,  2,  2,  2,  2,  2,  7,  2,  10, 10,
-    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 
-    10, 10, 10, 10, 10, 10, 10, 10, 3,  10, 10, 
-    10, 10, 10,  8,  10, 10, 10, 10, 10, 10, 10,
-     10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+    10, 2,  2,  2,  2,  2,  2,  7,  2,  10, 10, 10, 10, 10, 10, 10, 10, 10,
+    10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 3,  10, 10, 10, 10, 10,
+    8,  10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
     10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
     10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
     10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,

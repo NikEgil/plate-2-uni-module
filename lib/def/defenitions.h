@@ -1,5 +1,4 @@
 #pragma once
-
 extern const int ID;
 constexpr int uS_TO_S_FACTOR = 1000000; // Конверсия микросекунд в секунды
 constexpr int TIME_TO_SLEEP = 60 * 15;  // Время сна в секундах
@@ -12,17 +11,12 @@ extern const int activeport[];
 #define SWITCH_DEBOUNCE_MS 20
 
 struct CalPoint {
-    int raw;    // analogReadRaw()
-    float vbat; // Напряжение батареи (мультиметр)
+    int raw;
+    float vbat;
 };
-// 21
-// const CalPoint CAL_LOW = {.raw = 3575, .vbat = 3.047}; // Нижняя точка
-// const CalPoint CAL_HIGH = {.raw = 4729, .vbat = 4.094};
 
-const CalPoint CAL_LOW = {.raw = 3733, .vbat = 3.047}; // Нижняя точка
-const CalPoint CAL_HIGH = {.raw = 5873, .vbat = 4.063};
-
-
+extern const CalPoint CAL_LOW;
+extern const CalPoint CAL_HIGH;
 constexpr int LED_PIN = 15;
 
 #if BOARD_REV == 3 and BOARD_TYPE == 0
@@ -121,7 +115,7 @@ constexpr int LORA_UART_TX = 17;
 constexpr int LORA_AUX_PIN = 34; // E220 AUX
 constexpr int LORA_M0_PIN = 18;  // E220 M0
 constexpr int LORA_M1_PIN = 21;  // E220 M1
-constexpr int LORA_BAUD = 9800;
+constexpr int LORA_BAUD = 9600;
 constexpr int LORA_DEFAULT_CHANNEL = 17;
 constexpr int LORA_DEFAULT_ADDRESS = 01;
 

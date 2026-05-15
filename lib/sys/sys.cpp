@@ -271,7 +271,7 @@ void enable_power(bool act) {
     }
     if (act) {
         digitalWrite(EP, HIGH);
-        delay(400);
+        delay(2000);
         Serial.println("POWER ON");
         isPowered = true;
     } else {
