@@ -68,8 +68,8 @@ constexpr int ESIM = 3;
 constexpr int ADC = 10;
 constexpr int BUT1 = 7;
 constexpr int BUT2 = 9;
-constexpr int SW1_PIN = 36;
-constexpr int SW2_PIN = 35;
+constexpr int SW1_PIN = 6;
+constexpr int SW2_PIN = 36;
 #else
 #error "Unknown BOARD_REV"
 #endif

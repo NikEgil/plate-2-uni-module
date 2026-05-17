@@ -430,34 +430,104 @@ bool enableTimeSync() {
     Serial.println("[SIM] Time sync enabled");
     return true;
 }
-
 NetTime getNetworkTime() {
     NetTime result = {0};
-    if (!isActive || !modem)
-        return result;
+    result.valid = false;
+
+    if (!isActive || !modem) return result;
+
+    // Очистить буфер модема перед командой
+    // modem->waitResponse(0);  // вычитать все накопившиеся данные
 
     modem->sendAT(GF("+CCLK?"));
     String res;
-    if (modem->waitResponse(3000, res) != 1)
-        return result;
-
-    int start = res.indexOf('"');
-    int end = res.indexOf('"', start + 1);
-    if (start < 0 || end < 0)
-        return result;
-
-    String timeStr = res.substring(start + 1, end);
-    if (sscanf(timeStr.c_str(), "%d/%d/%d,%d:%d:%d+%d", &result.year,
-               &result.month, &result.day, &result.hour, &result.minute,
-               &result.second, &result.timezone) != 7) {
+    int8_t status = modem->waitResponse(5000, res);  // увеличенный таймаут 5 с
+    if (status != 1) {
+        Serial.printf("[SIM] getNetworkTime: no response (status=%d)\n", status);
         return result;
     }
 
-    if (result.year < 100)
-        result.year += 2000;
+    // Ищем подстроку "+CCLK: "
+    int cclkPos = res.indexOf("+CCLK: ");
+    if (cclkPos < 0) {
+        Serial.println("[SIM] getNetworkTime: '+CCLK: ' not found");
+        return result;
+    }
+
+    // Находим кавычки вокруг времени
+    int q1 = res.indexOf('"', cclkPos);
+    if (q1 < 0) {
+        Serial.println("[SIM] getNetworkTime: opening quote not found");
+        return result;
+    }
+    int q2 = res.indexOf('"', q1 + 1);
+    if (q2 < 0) {
+        Serial.println("[SIM] getNetworkTime: closing quote not found");
+        return result;
+    }
+
+    String timeStr = res.substring(q1 + 1, q2);
+    // timeStr имеет формат "YY/MM/DD,HH:MM:SS+TZ" (например, "25/05/14,12:30:45+12")
+
+    int year, month, day, hour, minute, second, tz;
+    char tzSign;
+    int fields = sscanf(timeStr.c_str(), "%d/%d/%d,%d:%d:%d%c%d",
+                        &year, &month, &day, &hour, &minute, &second,
+                        &tzSign, &tz);
+
+    if (fields < 8) {
+        Serial.printf("[SIM] getNetworkTime: sscanf failed (got %d fields) from '%s'\n",
+                      fields, timeStr.c_str());
+        return result;
+    }
+
+    if (tzSign == '-') tz = -tz;
+    if (year < 100) year += 2000;
+
+    // Проверка разумности значений
+    if (month < 1 || month > 12 || day < 1 || day > 31 ||
+        hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+        second < 0 || second > 59) {
+        Serial.printf("[SIM] getNetworkTime: invalid date/time: %04d-%02d-%02d %02d:%02d:%02d\n",
+                      year, month, day, hour, minute, second);
+        return result;
+    }
+
+    result.year = year;
+    result.month = month;
+    result.day = day;
+    result.hour = hour;
+    result.minute = minute;
+    result.second = second;
+    result.timezone = tz;    // в четвертях часа
     result.valid = true;
     return result;
 }
+
+
+// NetTime getNetworkTime() {
+//     NetTime result = {0};
+//     if (!isActive || !modem)
+//         return result;
+//     modem->sendAT(GF("+CCLK?"));
+//     String res;
+//     if (modem->waitResponse(3000, res) != 1)
+//         return result;
+//     int start = res.indexOf('"');
+//     int end = res.indexOf('"', start + 1);
+//     if (start < 0 || end < 0)
+//         return result;
+//     String timeStr = res.substring(start + 1, end);
+//     if (sscanf(timeStr.c_str(), "%d/%d/%d,%d:%d:%d+%d", &result.year,
+//                &result.month, &result.day, &result.hour, &result.minute,
+//                &result.second, &result.timezone) != 7) {
+//         return result;
+//     }
+//     if (result.year < 100)
+//         result.year += 2000;
+//     result.valid = true;
+//     return result;
+// }
 
 int syncSystemClock() {
     // Защита от слишком частых вызовов

@@ -481,6 +481,10 @@ void getNetTime() {
             blink(2, 1000);
             break;
         }
+        else{
+            Serial.println("fail");
+            delay(3000);
+        }
     }
     printCurrentTime();
 }
@@ -1050,7 +1054,7 @@ RTC_DATA_ATTR uint32_t lastWorkTime = 0;
 RTC_DATA_ATTR uint32_t lastSleepTime = 0;
 const uint32_t WORK_INTERVAL = 30UL * 60 * 1000; // 30 минут
 int iter = 0;
-bool work() {
+void work() {
     lora_activate(false);
     enable_power(false);
     delay(100);
@@ -1071,8 +1075,6 @@ bool work() {
         Serial.println("   ❌ SIM activation failed");
     }
     sim_activate(false);
-    lora_activate(true);
-    return success;
 }
 
 void setup() {
@@ -1105,14 +1107,14 @@ void setup() {
     if (wakebut == 3) {
 
         cleanUpStack();
-        // lora_activate(true);
-        // int ch = readSwitchState() + 1;
-        // Serial.printf("Chanel set %i\n", ch);
-        // blink(ch, 400);
-        // if (LoRa::configSet(17, 1)) {
-        //     LoRa::configGet();
-        // }
-        // lora_activate(0);
+        lora_activate(true);
+        int ch = readSwitchState() + 1;
+        Serial.printf("Chanel set %i\n", ch);
+        blink(ch, 400);
+        if (LoRa::configSet(17, ch)) {
+            LoRa::configGet();
+        }
+        lora_activate(0);
         SIM_check_signal();
         enable_sim(0);
         enable_power(0);
@@ -1178,12 +1180,11 @@ void loop() {
         Serial.printf("stack count %i timeExpired %i\n", stack.count(),
                       timeExpired);
         Serial.println("️        Running work()...");
-
-        bool ok = work(); // теперь work() не уходит в сон внутри
-
-        Serial.println("️        END work()...");
+        work();                  // теперь work() не уходит в сон внутри
         lastWorkTime = millis(); // обновляем метку после попытки
         blink(2, 750);
+        Serial.println("️        END work()...");
+        lora_activate(true);
     }
 
     // Плановый уход в глубокий сон
