@@ -8,7 +8,7 @@ int isPortEnable = 0;
 bool isSimEnable = false;
 bool isLoraEnable = false;
 } // namespace
-#if BOARD_REV == 2 
+#if BOARD_REV == 2
 void initPins() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(EG1, OUTPUT);
@@ -16,7 +16,7 @@ void initPins() {
     pinMode(EG3, OUTPUT);
     pinMode(EG4, OUTPUT);
     pinMode(E12V, OUTPUT);
-        pinMode(E5V, OUTPUT);
+    pinMode(E5V, OUTPUT);
 
     pinMode(ADC, INPUT);
     analogReadResolution(13);
@@ -59,6 +59,7 @@ void initPins() {
     pinMode(ESIM, OUTPUT);
     pinMode(EP, OUTPUT);
     pinMode(ELORA, OUTPUT);
+    pinMode(SIM_PWR, OUTPUT);
     // настройка для измерения батареи
     pinMode(ADC, INPUT);
     analogReadResolution(13);
@@ -101,8 +102,7 @@ uint8_t readSwitchState() {
 
     // Если состояние стабильно > дебаунс — принимаем его
     if (millis() - lastChange > SWITCH_DEBOUNCE_MS) {
-            return raw; // Возвращаем только при реальном изменении
-        
+        return raw; // Возвращаем только при реальном изменении
     }
 
     // return 0xFF; // Специальный код: "нет изменений" (можно игнорировать)
@@ -110,22 +110,22 @@ uint8_t readSwitchState() {
 
 uint8_t checkButton() {
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    
+
     // 🔹 3: Холодный старт (подача питания / нажатие RESET)
     if (cause == ESP_SLEEP_WAKEUP_UNDEFINED) {
         return 3;
     }
-    
+
     // 🔹 1 или 2: Пробуждение по кнопкам (EXT1)
     if (cause == ESP_SLEEP_WAKEUP_EXT1) {
         uint64_t status = esp_sleep_get_ext1_wakeup_status();
-        
+
         // Дебаунс: ждём стабилизации сигнала
         delay(10);
-        
+
         // Проверяем какой пин вызвал пробуждение
         if (status & (1ULL << BUT1)) {
-            waitForButtonRelease();  // Ждём отпускания (твоя функция)
+            waitForButtonRelease(); // Ждём отпускания (твоя функция)
             return 1;
         }
         if (status & (1ULL << BUT2)) {
@@ -133,16 +133,10 @@ uint8_t checkButton() {
             return 2;
         }
     }
-    
+
     // 🔹 0: Таймер или другая причина (обычный рабочий цикл)
     return 0;
 }
-
-
-
-
-
-
 
 void waitForButtonRelease() {
     // Ждем HIGH на обеих кнопках (отпускания)
@@ -271,7 +265,7 @@ void enable_power(bool act) {
     }
     if (act) {
         digitalWrite(EP, HIGH);
-        delay(2000);
+        delay(1000);
         Serial.println("POWER ON");
         isPowered = true;
     } else {
@@ -327,7 +321,27 @@ void enable_sens(int port) {
 
 #endif
 
-#if NET == 0 and BOARD_REV == 3
+#if NET == 0 and BOARD_REV == 2
+void enable_lora(bool act) {
+    if (act == isLoraEnable) {
+        return;
+    }
+    if (act) {
+        digitalWrite(ELORA, HIGH);
+        delay(200);
+        Serial.println("LORA ON");
+        isLoraEnable = true;
+    } else {
+        digitalWrite(ELORA, LOW);
+        delay(200);
+        Serial.println("LORA OFF");
+        isLoraEnable = false;
+    }
+}
+
+
+
+#elif NET == 0 and BOARD_REV == 3
 void enable_lora(bool act) {
     if (act == isLoraEnable) {
         return;
@@ -384,13 +398,35 @@ void enable_sim(bool act) {
     }
     if (act) {
         digitalWrite(ESIM, HIGH);
-        delay(2000);
+        delay(1000);
         Serial.println("SIM ON");
         isSimEnable = true;
     } else {
         digitalWrite(ESIM, LOW);
-        delay(200);
+        delay(1000);
         Serial.println("SIM OFF");
+        isSimEnable = false;
+    }
+}
+
+void activate_sim(bool act) {
+    if (act == isSimEnable) {
+        return;
+    }
+    if (act) {
+        digitalWrite(ESIM, HIGH);
+        delay(100);
+        enable_power(true);
+        Serial.println("SIM ON");
+        digitalWrite(ESIM, LOW);
+        isSimEnable = true;
+    } else {
+        digitalWrite(ESIM, HIGH);
+        delay(2000);
+        enable_power(true);
+        Serial.println("SIM OFF");
+        digitalWrite(ESIM, LOW);
+
         isSimEnable = false;
     }
 }

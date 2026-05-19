@@ -29,6 +29,7 @@ void enable_power(bool act);
 void enable_sens(int port);
 void enable_sim(bool act);
 void enable_lora(bool act);
+void activate_sim(bool act) ;
 void addCRC(byte req[], int dataLength, byte response[]);
 bool setTimeFromHexBytes(const byte buf[6]);
 void outCRC(byte req[], int dataLength, byte outcrc[]);

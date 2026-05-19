@@ -1,11 +1,13 @@
 #include <defenitions.h>
 const int activeport[] = {1, 4};
-const int ID = 22; // ваша глобальная переменная
+const int ID = 10009; // ваша глобальная переменная
 
 // Глобальные константы, инициализированные в зависимости от ID
-const CalPoint CAL_LOW = (ID == 21)      ? CalPoint{3575, 3.047}
-                        : (ID == 22)      ? CalPoint{3808, 3.266}
-                        
+const CalPoint CAL_LOW = (ID == 21)   ? CalPoint{3575, 3.047}
+                         : (ID == 22) ? CalPoint{3808, 3.266}
+                         : (ID == 23) ? CalPoint{3722, 3.262}
+                         //  : (ID == 24)      ? CalPoint{4214, 3.262} нету
+
                          : (ID == 20002) ? CalPoint{3741, 3.225}
 
                          : (ID == 10001) ? CalPoint{3741, 3.225}
@@ -14,11 +16,16 @@ const CalPoint CAL_LOW = (ID == 21)      ? CalPoint{3575, 3.047}
                          : (ID == 10004) ? CalPoint{3952, 3.262}
                          : (ID == 10005) ? CalPoint{3809, 3.286}
                          : (ID == 10006) ? CalPoint{3697, 3.264}
-                                         : CalPoint{0, 3};
+                         : (ID == 10007) ? CalPoint{3647, 3.260}
+                         : (ID == 10008) ? CalPoint{3647, 3.260}
+                         : (ID == 10009) ? CalPoint{3594, 3.260}
+                                         : CalPoint{3697, 3};
 
-const CalPoint CAL_HIGH = (ID == 21)      ? CalPoint{4729, 4.094}
-                          : (ID == 22)    ? CalPoint{4871, 4.145}
-                          
+const CalPoint CAL_HIGH = (ID == 21)   ? CalPoint{4729, 4.094}
+                          : (ID == 22) ? CalPoint{4871, 4.145}
+                          : (ID == 23) ? CalPoint{4650, 4.08}
+                          //   : (ID == 24)    ? CalPoint{5097, 4.114} нету
+
                           : (ID == 20002) ? CalPoint{6244, 4.093}
 
                           : (ID == 1000)  ? CalPoint{6061, 4.092}
@@ -27,8 +34,11 @@ const CalPoint CAL_HIGH = (ID == 21)      ? CalPoint{4729, 4.094}
                           : (ID == 10004) ? CalPoint{4670, 3.851}
                           : (ID == 10005) ? CalPoint{6929, 4.14}
                           : (ID == 10006) ? CalPoint{6198, 4.062}
+                          : (ID == 10007) ? CalPoint{6427, 4.122}
+                          : (ID == 10008) ? CalPoint{6427, 4.122}
+                          : (ID == 10009) ? CalPoint{7356, 4.122}
 
-                                          : CalPoint{1, 4};
+                                          : CalPoint{6198, 4};
 
 #if NET > 0
 const char *apn = "m2m.mts.ru"; // Access Point Name
@@ -37,8 +47,8 @@ const char *gprsPass = "mts";   // GPRS password (if required)
 // 158.160.240.169
 const char *broker = "158.160.240.169";
 
-const char *IDchar = "00000022";
-const char *pass = "GMSL00000022";
+const char *IDchar = "00000023";
+const char *pass = "GMSL00000023";
 
 #endif
 

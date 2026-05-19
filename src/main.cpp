@@ -93,7 +93,7 @@ void cleanUpStack() {
     }
 }
 
-#if BOARD_TYPE == 0
+#if BOARD_TYPE == 0 
 bool searche_multisens() {
     Serial.println("founding multisens");
     byte req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
@@ -154,17 +154,17 @@ bool searchSensors(int port) {
     Serial.println("	responses:");
     printHEX(response, lenresponse);
 
-    if (response[0] == 0x00) {
-        Serial.println("	wait meteo:");
-        for (int i = 0; i < 80; i++) {
-            delay(250);
-            lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
-            printHEX(response, lenresponse);
-            if (response[0] != 0) {
-                break;
-            }
-        }
-    }
+    // if (response[0] == 0x00) {                                                                                                                                                                                                                                                                                                                                
+    //     Serial.println("	wait meteo:");
+    //     for (int i = 0; i < 80; i++) {
+    //         delay(250);
+    //         lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
+    //         printHEX(response, lenresponse);
+    //         if (response[0] != 0) {
+    //             break;
+    //         }
+    //     }
+    // }
 
     Serial.printf("%i		FOUND		!!!\n", (int)response[0]);
     if (response[0] == 0x24) {
@@ -474,19 +474,40 @@ void getNetTime() {
     Serial.println("Enabling time sync...");
     if (SimModule::enableTimeSync()) {
     }
-    delay(4000); // Ждём NITZ-обновление от вышки
+    delay(10000); // Ждём NITZ-обновление от вышки
     for (int i = 0; i < 3; i++) {
         if (SimModule::syncSystemClock()) {
             Serial.println("✓ Time ready");
             blink(2, 1000);
             break;
-        }
-        else{
+        } else {
             Serial.println("fail");
             delay(3000);
         }
     }
     printCurrentTime();
+}
+
+void simres() {
+    enable_power(true);
+    Serial.println("sim pwr low");
+    // digitalWrite(SIM_PWR, LOW);
+    enable_sim(true);
+    enable_sim(false);
+    delay(1000);
+    Serial.println("sim pwr high");
+
+    // 2. Ждём загрузки модуля
+    delay(10000);
+    yield();
+
+    // 3. Программная инициализация
+    SimModule::begin();
+    SimModule::activate(true);
+    SimModule::factoryReset();
+    SimModule::disconnect();
+    SimModule::activate(false);
+    SimModule::end();
 }
 
 bool sim_activate(bool act) {
@@ -495,8 +516,8 @@ bool sim_activate(bool act) {
         SimModule::disconnect();
         SimModule::activate(false);
         SimModule::end();
-        enable_sim(false);
-        enable_power(false);
+        // enable_sim(false);
+        activate_sim(false);
         Serial.println("\tsim disconnected");
         return true;
     }
@@ -510,17 +531,14 @@ bool sim_activate(bool act) {
         yield();
 
         // 1. Питание и аппаратный сброс
-        enable_power(true);
-        enable_sim(true);
-
+        activate_sim(true);
+        // digitalWrite(SIM_PWR, HIGH);
         // 2. Ждём загрузки модуля
-        delay(8000);
+        delay(15000);
         yield();
-
         // 3. Программная инициализация
         SimModule::begin();
         SimModule::activate(true);
-
         // 4. Даём время на регистрацию в сети (можно просто задержку, т.к.
         // connect() сам ждёт)
         //    Но мы всё равно делаем небольшую паузу, чтобы модуль "осмотрелся"
@@ -546,11 +564,11 @@ bool sim_activate(bool act) {
         SimModule::disconnect();
         SimModule::activate(false);
         SimModule::end();
-        enable_sim(false);
-        enable_power(false);
+
         delay(ROUND_DELAY);
     }
-
+    enable_sim(false);
+    enable_power(false);
     Serial.println("All rounds failed");
     return false;
 }
@@ -868,7 +886,7 @@ void lora_check_signal() {
     Serial.printf("Chanel set %i\n", ch);
     blink(ch, 400);
 
-    if (LoRa::configSet(17, ch)) {
+    if (LoRa::configSet(17, 4)) {
         LoRa::configGet();
     }
     int rssi = lora_rssi(pac);
@@ -981,7 +999,7 @@ void setup() {
 }
 void loop() {}
 #endif
-#if BOARD_TYPE == 0 and NET == 0
+#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV==3
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
@@ -1026,7 +1044,10 @@ void setup() {
         break;
     case 3:
         Serial.println("work first");
-
+        for (int i = 0; i < 5; i++) {
+            tableSens[i] = 0x00;
+        }
+        saveArrayToFlash(tableSens);
         cleanUpStack();
         lora_check_signal();
         searchSensors(1);
@@ -1047,6 +1068,78 @@ void setup() {
 }
 void loop() {}
 #endif
+
+#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV==2
+void setup() {
+    initPins();
+    Serial.begin(115200); // монитор порта
+    for (int i = 0; i < 50; i++) {
+        if (!Serial) {
+            blink(1, 50);
+        }
+    }
+    Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
+    uint32_t cpu_mhz = getCpuFrequencyMhz(); // частота CPU в МГц
+    uint32_t apb_mhz = getApbFrequency();    // частота шины APB (обычно 80 МГц)
+
+    Serial.printf("CPU Frequency: %u MHz\n", cpu_mhz);
+    Serial.printf("APB Frequency: %u Hz\n", apb_mhz);
+    Battery = readBatteryVoltage();
+    RsModbus::init(REDE);
+    delay(1000);
+    if (!loadArrayFromFlash(tableSens)) {
+        for (int i = 0; i < 5; i++) {
+            tableSens[i] = 0x00; // Заполняем 0,1,2...7
+        }
+        saveArrayToFlash(tableSens);
+    }
+    uint8_t wake_but = checkButton();
+    if (stack.begin()) {
+        Serial.printf("STACK OK, count %i\n", stack.count());
+    } else {
+        Serial.println("Ошибка: раздел flashbuf не найден!");
+    }
+    Serial.printf("State wake up %i\n\n", wake_but);
+    byte pac[198] = {0};
+    int q = 0;
+    switch (wake_but) {
+    case 1:
+        lora_check_signal();
+        sleep(10);
+        break;
+    case 2:
+        searchSensors(1);
+        searchSensors(4);
+        sleep(10);
+        break;
+    case 3:
+        Serial.println("work first");
+        for (int i = 0; i < 5; i++) {
+            tableSens[i] = 0x00;
+        }
+        saveArrayToFlash(tableSens);
+        // cleanUpStack();
+        lora_check_signal();
+        searchSensors(1);
+        searchSensors(4);
+        enable_sens(0);
+        enable_power(0);
+        sleep(10);
+        break;
+    default:
+        dataPrepare();
+        enable_sens(0);
+        enable_power(0);
+        lora_send();
+        Serial.println("            complited");
+        break;
+    }
+    sleep(TIME_TO_SLEEP);
+}
+void loop() {}
+#endif
+
+
 #if BOARD_TYPE == 1 and NET == 2
 // #include <esp_attr.h>   // RTC_DATA_ATTR
 
@@ -1105,8 +1198,11 @@ void setup() {
     int wakebut = checkButton();
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
-
-        cleanUpStack();
+        // simres();
+        // cleanUpStack();
+        SIM_check_signal();
+        enable_sim(0);
+        enable_power(0);
         lora_activate(true);
         int ch = readSwitchState() + 1;
         Serial.printf("Chanel set %i\n", ch);
@@ -1115,9 +1211,6 @@ void setup() {
             LoRa::configGet();
         }
         lora_activate(0);
-        SIM_check_signal();
-        enable_sim(0);
-        enable_power(0);
     }
 
     // byte aa[] = {
@@ -1197,7 +1290,7 @@ void loop() {
     yield();
 }
 
-#elif BOARD_REV == 2
+#elif BOARD_REV == 2 and NET !=0
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта

@@ -51,7 +51,7 @@ constexpr int RS2RX = 38;
 constexpr int RS2TX = 37;
 constexpr int REDE = 11;
 
-constexpr int ESIM = 9;
+constexpr int ELORA = 8;
 constexpr int SIMRX = 17;
 constexpr int SIMTX = 16;
 constexpr int SIM_BAUD = 9600;
@@ -66,8 +66,9 @@ constexpr int EP = 2;
 constexpr int ELORA = 8;
 constexpr int ESIM = 3;
 constexpr int ADC = 10;
-constexpr int BUT1 = 7;
+constexpr int BUT1 = 1;
 constexpr int BUT2 = 9;
+constexpr int SIM_PWR = 7;
 constexpr int SW1_PIN = 6;
 constexpr int SW2_PIN = 36;
 #else
