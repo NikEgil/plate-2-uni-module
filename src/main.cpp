@@ -93,7 +93,7 @@ void cleanUpStack() {
     }
 }
 
-#if BOARD_TYPE == 0 
+#if BOARD_TYPE == 0
 bool searche_multisens() {
     Serial.println("founding multisens");
     byte req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
@@ -154,17 +154,17 @@ bool searchSensors(int port) {
     Serial.println("	responses:");
     printHEX(response, lenresponse);
 
-    // if (response[0] == 0x00) {                                                                                                                                                                                                                                                                                                                                
-    //     Serial.println("	wait meteo:");
-    //     for (int i = 0; i < 80; i++) {
-    //         delay(250);
-    //         lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
-    //         printHEX(response, lenresponse);
-    //         if (response[0] != 0) {
-    //             break;
-    //         }
-    //     }
-    // }
+    if (response[0] == 0x00) {
+        Serial.println("	wait meteo:");
+        for (int i = 0; i < 80; i++) {
+            delay(250);
+            lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
+            printHEX(response, lenresponse);
+            if (response[0] != 0) {
+                break;
+            }
+        }
+    }
 
     Serial.printf("%i		FOUND		!!!\n", (int)response[0]);
     if (response[0] == 0x24) {
@@ -214,15 +214,13 @@ int pollingMeteo(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
         return -1;
     Serial.println("Wait meteo data");
     int received = 0;
-    for (int i = 0; i < 80; i++) {
-        received = RsModbus::receiveData(outBuf, outBufSize, 300);
+    for (int i = 0; i < 40; i++) {
+        received = RsModbus::receiveData(outBuf, outBufSize, 750);
         Serial.printf("Tray %i,  RX[%d]: ", i, received);
         printHEX(outBuf, received);
-        Serial.printf("rec %i,  sensreg %i: ", received, lenreg);
-        if (received == 21) {
-
+        if (outBuf[0] == 0x24 and check_wh65lp_crc(outBuf, received)) {
             return received;
-            printHEX(outBuf, received);
+            // printHEX(outBuf, received);
         } else {
             delay(250);
         }
@@ -286,13 +284,17 @@ MeasureResult measure(int port) {
         res.valid = true;
         break;
     case 36:
-        res.length = 5 + lenreg * 2 + 1;
+        res.length = 26;
         res.data = (uint8_t *)malloc(res.length);
-        received = pollingMeteo(sens, res.length, tempBuf, res.length);
-        if (received == (int)res.length) {
+        received = pollingMeteo(sens, 25, tempBuf, res.length);
+        if (received == 25) {
             res.data[0] = (byte)port;
             memcpy(res.data + 1, tempBuf, received);
-            printHEX(res.data, received);
+            Serial.println("полученные данные");
+            printHEX(tempBuf, received);
+
+            Serial.println("скопированные данные");
+            printHEX(res.data, res.length);
             res.valid = true;
         } else {
             Serial.println("⚠️ Meteo sensor failed");
@@ -517,7 +519,10 @@ bool sim_activate(bool act) {
         SimModule::activate(false);
         SimModule::end();
         // enable_sim(false);
+        // enable_power(false);
         activate_sim(false);
+        enable_power(false);
+
         Serial.println("\tsim disconnected");
         return true;
     }
@@ -532,18 +537,29 @@ bool sim_activate(bool act) {
 
         // 1. Питание и аппаратный сброс
         activate_sim(true);
-        // digitalWrite(SIM_PWR, HIGH);
-        // 2. Ждём загрузки модуля
-        delay(15000);
+        Serial.println("sim on");
+
+        // // // digitalWrite(SIM_PWR, HIGH);
+
+        // enable_power(1);
+        // delay(3000);
+        // enable_sim(1);
+        // // 2. Ждём загрузки модуля
+        delay(10000);
+                esp_task_wdt_reset();
+
         yield();
         // 3. Программная инициализация
         SimModule::begin();
+        esp_task_wdt_reset();
+        yield();
+
         SimModule::activate(true);
         // 4. Даём время на регистрацию в сети (можно просто задержку, т.к.
         // connect() сам ждёт)
         //    Но мы всё равно делаем небольшую паузу, чтобы модуль "осмотрелся"
         delay(5000);
-
+        Serial.println("try conect");
         // 5. Пробуем подключиться
         if (SimModule::connect(apn, gprsUser, gprsPass)) {
             Serial.println("\tsim connected");
@@ -564,48 +580,16 @@ bool sim_activate(bool act) {
         SimModule::disconnect();
         SimModule::activate(false);
         SimModule::end();
+        // enable_sim(false);
 
         delay(ROUND_DELAY);
     }
-    enable_sim(false);
-    enable_power(false);
+    activate_sim(false);
+    // enable_sim(false);
+    // enable_power(false);
     Serial.println("All rounds failed");
     return false;
 }
-// bool sim_activate(bool act) {
-//     if (act) {
-//         yield();
-//         enable_power(true);
-//         delay(2000);
-//         enable_sim(true);
-//         delay(2000);
-//         SimModule::begin();
-//         SimModule::activate(true);
-//         delay(5000);
-//         yield();
-//         if (SimModule::connect(apn, gprsUser, gprsPass)) {
-//             Serial.println("	sim connected");
-//             signalp = SimModule::getSignalQuality();
-//             SimModule::ccid(ccid);
-//             printHEX(ccid, 10);
-//             printCurrentTime();
-//             if (!isTime()) {
-//                 getNetTime();
-//             }
-//             blink(1, 1000);
-//             return true;
-//         } else {
-//             return false;
-//         }
-//     } else {
-//         SimModule::activate(false);
-//         SimModule::end();
-//         enable_sim(false);
-//         enable_power(false);
-//         Serial.println("	sim disconnected");
-//         return true;
-//     }
-// }
 
 void SIM_check_signal() {
     Serial.printf(">>> Action 1 (GPIO %i)", BUT1);
@@ -766,7 +750,7 @@ void lora_send() {
 
         Serial.printf(">>> Sending packet [len=%d]\n", g_packet[0]);
         bool success = false;
-
+        printHEX(g_packet, g_packet[0]);
         // Попытки отправки текущего пакета
         for (int attempt = 0; attempt < MAX_ATTEMPTS_PER_PACKET; attempt++) {
             if (millis() - sessionStart > SESSION_TIMEOUT)
@@ -886,7 +870,7 @@ void lora_check_signal() {
     Serial.printf("Chanel set %i\n", ch);
     blink(ch, 400);
 
-    if (LoRa::configSet(17, 4)) {
+    if (LoRa::configSet(17, ch)) {
         LoRa::configGet();
     }
     int rssi = lora_rssi(pac);
@@ -968,11 +952,13 @@ void setup() {
 
     uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
-    byte simpl[] = {0x00, 0x00, 0x00, 0x00, 0x00};
+    // byte simpl[] = {0x00, 0x24, 0x00, 0x00, 0x07};
+    // saveArrayToFlash(simpl);
+
     switch (wake_but) {
     case 1:
-        SIM_check_signal();
-        sleep(10);
+        work();
+        // SIM_check_signal();
         break;
     case 2:
         searchSensors(activeport[0]);
@@ -999,7 +985,7 @@ void setup() {
 }
 void loop() {}
 #endif
-#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV==3
+#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV == 3
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
@@ -1069,7 +1055,7 @@ void setup() {
 void loop() {}
 #endif
 
-#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV==2
+#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV == 2
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
@@ -1138,7 +1124,6 @@ void setup() {
 }
 void loop() {}
 #endif
-
 
 #if BOARD_TYPE == 1 and NET == 2
 // #include <esp_attr.h>   // RTC_DATA_ATTR
@@ -1199,7 +1184,7 @@ void setup() {
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
         // simres();
-        // cleanUpStack();
+        cleanUpStack();
         SIM_check_signal();
         enable_sim(0);
         enable_power(0);
@@ -1290,7 +1275,7 @@ void loop() {
     yield();
 }
 
-#elif BOARD_REV == 2 and NET !=0
+#elif BOARD_REV == 2 and NET != 0
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта

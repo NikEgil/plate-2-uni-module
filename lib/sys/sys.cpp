@@ -1,4 +1,6 @@
 #include <sys.h>
+#include <stdint.h>
+
 esp_adc_cal_characteristics_t adc_chars;
 Preferences preferences;
 
@@ -339,8 +341,6 @@ void enable_lora(bool act) {
     }
 }
 
-
-
 #elif NET == 0 and BOARD_REV == 3
 void enable_lora(bool act) {
     if (act == isLoraEnable) {
@@ -423,10 +423,9 @@ void activate_sim(bool act) {
     } else {
         digitalWrite(ESIM, HIGH);
         delay(2000);
-        enable_power(true);
+        enable_power(false);
         Serial.println("SIM OFF");
         digitalWrite(ESIM, LOW);
-
         isSimEnable = false;
     }
 }
@@ -472,6 +471,29 @@ void outCRC(byte req[], int dataLength, byte outcrc[]) {
     // Добавляем CRC в конец (младший байт первый)
     outcrc[0] = crc & 0xFF;        // LSB
     outcrc[1] = (crc >> 8) & 0xFF; // MSB
+}
+
+
+uint8_t crc8_wh65lp(const uint8_t *data, uint8_t len) {
+    uint8_t crc = 0x00;
+    uint8_t poly = 0x31; // полином
+    for (uint8_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t j = 0; j < 8; j++) {
+            if (crc & 0x80)
+                crc = (crc << 1) ^ poly;
+            else
+                crc <<= 1;
+        }
+    }
+    return crc;
+}
+
+bool check_wh65lp_crc(uint8_t *response, uint8_t len) {
+    if (len < 17)
+        return false;
+    uint8_t computed = crc8_wh65lp(response, 15); // первые 15 байт
+    return (computed == response[15]);
 }
 bool checkCRC(byte response[], int lenresponse) {
     byte crc[2] = {0x00, 0x00};

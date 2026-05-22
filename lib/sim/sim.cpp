@@ -32,48 +32,101 @@ namespace SimModule {
 //-----------------------------------------------------
 // begin() – инициализация
 //-----------------------------------------------------
+// void begin(int rxPin, int txPin, uint32_t baud) {
+//     end();
+//     if (rxPin == -1) rxPin = SIMRX;
+//     if (txPin == -1) txPin = SIMTX;
+//     if (baud == 0)   baud = SIM_BAUD;   // должно быть 9600
+//     Serial.println("\n=== [SIM] begin() (HardwareSerial) ===");
+//     Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin, baud);
+//     simSerial = &Serial1;
+//     simSerial->begin(baud, SERIAL_8N1, rxPin, txPin);
+//     simSerial->setTimeout(1000);
+//     // Принудительно фиксируем скорость модема на 9600 (на случай, если он запомнил другую)
+//     simSerial->write("AT+IPR=9600\r\n");
+//     delay(200);
+//     // Очищаем буфер от возможного эха
+//     while (simSerial->available()) simSerial->read();
+//     // Простейшая проверка связи
+//     simSerial->write("AT\r\n");
+//     String resp;
+//     unsigned long start = millis();
+//     while (millis() - start < 5000) {
+//         if (simSerial->available()) {
+//             resp = simSerial->readString();
+//             if (resp.indexOf("OK") >= 0) break;
+//         }
+//         delay(50);
+//     }
+//     if (resp.indexOf("OK") < 0) {
+//         Serial.println("[SIM] AT test failed, but continuing...");
+//     } else {
+//         Serial.println("[SIM] AT test OK");
+//     }
+//     modem = new TinyGsm(*simSerial);
+//     client = new TinyGsmClient(*modem);
+//     // Теперь init должен отработать (он тоже шлёт AT, но ответ                              mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm                                                                                                                                    уже приходит)
+//     if (!modem->init()) {
+//         Serial.println("Modem init failed, trying once more...");
+//         // Иногда помогает второй вызов
+//         delay(1000);
+//         modem->init();
+//     }
+//     esp_task_wdt_reset();
+//     Serial.println("Modem init done");
+//     // Таймаут TCP 20 секунд и сохранение
+//     // modem->sendAT(GF("+CIPTIMEOUT=20"));
+//     // modem->waitResponse(1000);
+//         Serial.println("Modem init done2");
+//     // modem->sendAT(GF("&W"));
+//     // modem->waitResponse(1000);
+//     mqtt = new PubSubClient(*client);
+//     mqtt->setSocketTimeout(MQTT_SOCKET_TIMEOUT);
+//     mqtt->setKeepAlive(60);
+//         Serial.println("Modem init done3");
+//     mqtt->setBufferSize(512);
+//     Serial.println("=== [SIM] begin() SUCCESS ===");
+// }
+
+
+//для 21 и 22 
+
 void begin(int rxPin, int txPin, uint32_t baud) {
+    // 1. Принудительная очистка предыдущего состояния
     end();
-    if (rxPin == -1) rxPin = SIMRX;
-    if (txPin == -1) txPin = SIMTX;
-    if (baud == 0)   baud = SIM_BAUD;   // должно быть 9600
+    // 2. Параметры по умолчанию
+    if (rxPin == -1)
+        rxPin = SIMRX;
+    if (txPin == -1)
+        txPin = SIMTX;
+    if (baud == 0)
+        baud = SIM_BAUD;
     Serial.println("\n=== [SIM] begin() (HardwareSerial) ===");
-    Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin, baud);
+    Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin,
+                  baud);
+    // 3. Инициализируем аппаратный UART (Serial1)
     simSerial = &Serial1;
     simSerial->begin(baud, SERIAL_8N1, rxPin, txPin);
     simSerial->setTimeout(1000);
-    // Принудительно фиксируем скорость модема на 9600 (на случай, если он запомнил другую)
-    simSerial->write("AT+IPR=9600\r\n");
-    delay(200);
-    // Очищаем буфер от возможного эха
-    while (simSerial->available()) simSerial->read();
-    // Простейшая проверка связи
-    simSerial->write("AT\r\n");
-    String resp;
-    unsigned long start = millis();
-    while (millis() - start < 5000) {
-        if (simSerial->available()) {
-            resp = simSerial->readString();
-            if (resp.indexOf("OK") >= 0) break;
-        }
-        delay(50);
-    }
-    if (resp.indexOf("OK") < 0) {
-        Serial.println("[SIM] AT test failed, but continuing...");
-    } else {
-        Serial.println("[SIM] AT test OK");
-    }
+    // 4. Создаём объекты TinyGSM
     modem = new TinyGsm(*simSerial);
     client = new TinyGsmClient(*modem);
-    // Теперь init должен отработать (он тоже шлёт AT, но ответ                              mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm                                                                                                                                    уже приходит)
-    if (!modem->init()) {
-        Serial.println("Modem init failed, trying once more...");
-        // Иногда помогает второй вызов
-        delay(1000);
-        modem->init();
-    }
-    Serial.println("Modem init done");
-    // Таймаут TCP 20 секунд и сохранение
+    // Устанавливаем таймаут TCP 20 секунд и сохраняем
+        // Отключаем эхо и URC, чтобы не засорять буфер
+    modem->sendAT(GF("E0"));        // выключаем эхо
+    modem->waitResponse(500);
+    modem->sendAT(GF("+CMGF=0"));   // текстовый режим SMS (обычно не нужно)
+    modem->waitResponse(500);
+    modem->sendAT(GF("+CNMI=0,0,0,0,0")); // отключаем индикацию новых сообщений
+    modem->waitResponse(500);
+    // modem->sendAT(GF("+CLTS=0"));   // отключаем автоматическую отметку времени
+    // modem->waitResponse(500);
+    modem->sendAT(GF("+CREG=0"));   // отключаем URC о регистрации в сети
+    modem->waitResponse(500);
+    modem->sendAT(GF("+CGREG=0"));  // отключаем URC о GPRS-регистрации
+    modem->waitResponse(500);
+    modem->sendAT(GF("+CSCLK=0"));  // отключаем slow clock (может влиять)
+    modem->waitResponse(500);
     modem->sendAT(GF("+CIPTIMEOUT=20"));
     modem->waitResponse(1000);
     modem->sendAT(GF("&W"));
@@ -84,56 +137,6 @@ void begin(int rxPin, int txPin, uint32_t baud) {
     mqtt->setBufferSize(512);
     Serial.println("=== [SIM] begin() SUCCESS ===");
 }
-
-                                              
-
-
-// void begin(int rxPin, int txPin, uint32_t baud) {
-//     // 1. Принудительная очистка предыдущего состояния
-//     end();
-//     // 2. Параметры по умолчанию
-//     if (rxPin == -1)
-//         rxPin = SIMRX;
-//     if (txPin == -1)
-//         txPin = SIMTX;
-//     if (baud == 0)
-//         baud = SIM_BAUD;
-//     Serial.println("\n=== [SIM] begin() (HardwareSerial) ===");
-//     Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin,
-//                   baud);
-//     // 3. Инициализируем аппаратный UART (Serial1)
-//     simSerial = &Serial1;
-//     simSerial->begin(baud, SERIAL_8N1, rxPin, txPin);
-//     simSerial->setTimeout(1000);
-//     // 4. Создаём объекты TinyGSM
-//     modem = new TinyGsm(*simSerial);
-//     client = new TinyGsmClient(*modem);
-//     // Устанавливаем таймаут TCP 20 секунд и сохраняем
-//         // Отключаем эхо и URC, чтобы не засорять буфер
-//     modem->sendAT(GF("E0"));        // выключаем эхо
-//     modem->waitResponse(500);
-//     modem->sendAT(GF("+CMGF=0"));   // текстовый режим SMS (обычно не нужно)
-//     modem->waitResponse(500);
-//     modem->sendAT(GF("+CNMI=0,0,0,0,0")); // отключаем индикацию новых сообщений
-//     modem->waitResponse(500);
-//     // modem->sendAT(GF("+CLTS=0"));   // отключаем автоматическую отметку времени
-//     // modem->waitResponse(500);
-//     modem->sendAT(GF("+CREG=0"));   // отключаем URC о регистрации в сети
-//     modem->waitResponse(500);
-//     modem->sendAT(GF("+CGREG=0"));  // отключаем URC о GPRS-регистрации
-//     modem->waitResponse(500);
-//     modem->sendAT(GF("+CSCLK=0"));  // отключаем slow clock (может влиять)
-//     modem->waitResponse(500);
-//     modem->sendAT(GF("+CIPTIMEOUT=20"));
-//     modem->waitResponse(1000);
-//     modem->sendAT(GF("&W"));
-//     modem->waitResponse(1000);
-//     mqtt = new PubSubClient(*client);
-//     mqtt->setSocketTimeout(MQTT_SOCKET_TIMEOUT);
-//     mqtt->setKeepAlive(60);
-//     mqtt->setBufferSize(512);
-//     Serial.println("=== [SIM] begin() SUCCESS ===");
-// }
 
 
 // void begin(int rxPin, int txPin, uint32_t baud) {

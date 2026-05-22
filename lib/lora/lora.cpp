@@ -171,7 +171,7 @@ bool configSet(uint8_t channel, uint8_t address) {
     configuration.SPED.uartParity = MODE_00_8N1;
     configuration.OPTION.subPacketSetting = SPS_200_00;
     configuration.OPTION.RSSIAmbientNoise = RSSI_AMBIENT_NOISE_ENABLED;
-    configuration.OPTION.transmissionPower = POWER_10;
+    configuration.OPTION.transmissionPower = POWER_22;
     configuration.TRANSMISSION_MODE.enableRSSI = RSSI_ENABLED;
     configuration.TRANSMISSION_MODE.fixedTransmission = 0;
     configuration.TRANSMISSION_MODE.enableLBT = LBT_DISABLED;

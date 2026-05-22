@@ -1,6 +1,6 @@
 #include <defenitions.h>
 const int activeport[] = {1, 4};
-const int ID = 10009; // ваша глобальная переменная
+const int ID = 23; // ваша глобальная переменная
 
 // Глобальные константы, инициализированные в зависимости от ID
 const CalPoint CAL_LOW = (ID == 21)   ? CalPoint{3575, 3.047}
