@@ -1,8 +1,8 @@
 #include "FlashStack.h"
 #include <Arduino.h>
+#include <Preferences.h>
 #include <esp_task_wdt.h>
-
-#if BOARD_REV == 2
+#if BOARD_TYPE == 2
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
@@ -21,7 +21,7 @@
 #if BOARD_TYPE == 0
 #include <rs.h>
 #endif
-#if BOARD_REV == 2
+#if BOARD_TYPE == 2
 
 // ===== ПЕРЕХВАТ SERIAL =====
 auto &RealSerial = Serial;
@@ -80,11 +80,45 @@ FlashStack stack;
 uint8_t g_packet[198];
 uint8_t a_packet[250];
 static uint8_t rxBuffer[250];
-
+Preferences prefs;
 int Battery = 146;
 byte tableSens[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
 byte ccid[10] = {};
 int signalp = 0;
+
+String Pass = "";
+String Broker = "";
+uint16_t Port = 0;
+
+void loadConfigFromNVS() {
+    Preferences prefs;
+    prefs.begin("sim-config", true); // read-only
+    if (prefs.isKey("broker")) {
+        Pass = prefs.getString("pass", "");
+        Broker = prefs.getString("broker", "");
+        Port = prefs.getString("port", "1883").toInt();
+        Serial.println("[NVS] Загружены настройки:");
+        Serial.printf("  Pass:   %s\n", Pass.c_str());
+        Serial.printf("  Broker: %s\n", Broker.c_str());
+        Serial.printf("  Port:   %d\n", Port);
+    } else {
+        Serial.println("[NVS] Нет сохранённых настроек");
+        Pass = "";
+        Broker = "";
+        Port = 1883;
+    }
+    prefs.end();
+}
+
+void saveConfigFromNVS(String spass, String sbroker, int sport) {
+    Preferences prefs;
+    prefs.begin("sim-config", false);
+    prefs.putString("pass", spass);
+    prefs.putString("broker", sbroker);
+    prefs.putString("port", String(sport));
+    prefs.end();
+    loadConfigFromNVS();
+}
 
 void cleanUpStack() {
     Serial.println(F("🧹 Cleaning stack..."));
@@ -322,7 +356,7 @@ MeasureResult measure(int port) {
     return res;
 }
 #endif
-#if BOARD_REV == 2
+#if BOARD_TYPE == 2
 MeasureResult measure(int port) {
     MeasureResult res = {nullptr, 0, false};
     digitalWrite(LED_PIN, HIGH);
@@ -512,6 +546,63 @@ void simres() {
     SimModule::end();
 }
 
+bool processOneSMS(const String &text) {
+    Serial.println("\n===== SMS =====");
+    Serial.println(text);
+
+    // Разбираем строку: ожидаем "ID pass broker port"
+    String parts[4];
+    int partIndex = 0;
+    int startPos = 0;
+    for (int i = 0; i <= text.length() && partIndex < 4; i++) {
+        if (i == text.length() || text[i] == ' ' || text[i] == '\n' ||
+            text[i] == '\r') {
+            if (i > startPos) {
+                parts[partIndex] = text.substring(startPos, i);
+                partIndex++;
+            }
+            startPos = i + 1;
+        }
+    }
+
+    if (partIndex < 4) {
+        Serial.println("[SMS] Неверный формат (нужно 4 поля)");
+        return false;
+    }
+
+    String id = parts[0];
+    String spass = parts[1];
+    String sbroker = parts[2];
+    uint16_t sport = parts[3].toInt();
+
+    // Проверяем ID устройства (IDchar определён в defenitions.h)
+    if (id != String(IDchar)) {
+        Serial.printf("[SMS] ID не совпадает: SMS=%s, Device=%s\n", id.c_str(),
+                      IDchar);
+        return false;
+    } else {
+        saveConfigFromNVS(spass, sbroker, sport);
+        return true;
+    }
+}
+void readSMS() {
+    String sms = "  ";
+    Serial.println("read sms");
+    while (sms != "") {
+        sms = SimModule::getUnreadSMS();
+        if (processOneSMS(sms)) {
+            byte aa[] = {0x0A, 0x11, 0x11, 0x11, 0x11, 0x11,
+                         0x11, 0x11, 0x11, 0x11, 0x11};
+            // res.data[s] = (byte)port;
+            memcpy(g_packet, aa, (int)aa[0]);
+            printHEX(g_packet, 198);
+            stack.write(g_packet);
+            // mqtt_send();
+        }
+    }
+    Serial.println("ALL SMS READED");
+}
+
 bool sim_activate(bool act) {
     if (!act) {
         // Выключение
@@ -521,7 +612,7 @@ bool sim_activate(bool act) {
         // enable_sim(false);
         // enable_power(false);
         activate_sim(false);
-        enable_power(false);
+        // enable_power(false);
 
         Serial.println("\tsim disconnected");
         return true;
@@ -530,23 +621,17 @@ bool sim_activate(bool act) {
     // --- Включение с несколькими раундами ---
     const int MAX_ROUNDS = 2;                // максимум 3 попытки
     const unsigned long ROUND_DELAY = 10000; // 5 секунд между раундами
+        activate_sim(0);
 
     for (int round = 1; round <= MAX_ROUNDS; round++) {
         Serial.printf("=== Round %d/%d ===\n", round, MAX_ROUNDS);
         yield();
 
-        // 1. Питание и аппаратный сброс
-        activate_sim(true);
-        Serial.println("sim on");
-
-        // // // digitalWrite(SIM_PWR, HIGH);
-
-        // enable_power(1);
-        // delay(3000);
+        activate_sim(1);
         // enable_sim(1);
         // // 2. Ждём загрузки модуля
         delay(10000);
-                esp_task_wdt_reset();
+        esp_task_wdt_reset();
 
         yield();
         // 3. Программная инициализация
@@ -571,6 +656,7 @@ bool sim_activate(bool act) {
                 getNetTime();
             }
             blink(1, 1000);
+            readSMS();
             return true;
         }
 
@@ -584,9 +670,9 @@ bool sim_activate(bool act) {
 
         delay(ROUND_DELAY);
     }
-    activate_sim(false);
-    // enable_sim(false);
-    // enable_power(false);
+
+    activate_sim(0);
+
     Serial.println("All rounds failed");
     return false;
 }
@@ -617,8 +703,10 @@ void SIM_check_signal() {
     } else {
         blink(10, 250);
     }
+
     sim_activate(false);
 }
+
 void SIM_reset() {
     enable_power(1);
     enable_sim(1);
@@ -662,7 +750,7 @@ int adding() {
 
 bool mqtt_send() {
     yield();
-    if (SimModule::mqttConnect()) {
+    if (SimModule::mqttConnect(Broker, Port, Pass)) {
         int l = stack.count();
         Serial.printf("packets to sending -  %i\n", l);
         for (int i = 0; i < l; i++) {
@@ -844,15 +932,13 @@ int lora_rssi(byte *pac) {
             delay(50);
         }
         return -1;
-
     } else {
         Serial.printf("   ❌ Failed Send)\n");
         return -1;
     }
 }
-
 void lora_check_signal() {
-    Serial.printf(">>> Action 1 (GPIO %i)", BUT1);
+    Serial.printf("\n>>> TEST \n", BUT1);
     blink(1, 1500);
     byte pac[11] = {};
 
@@ -860,19 +946,18 @@ void lora_check_signal() {
     if (isTime()) {
         getPackedTimeBytes(dateBytes);
     }
-    Serial.println("da");
     size_t len = preparePacket(pac, 11, ID, Battery, dateBytes);
     pac[0] = (byte)(len);
 
-    lora_activate(true);
+    // lora_activate(true);
 
-    int ch = readSwitchState() + 1;
-    Serial.printf("Chanel set %i\n", ch);
-    blink(ch, 400);
+    // int ch = readSwitchState() + 1;
+    // Serial.printf("Chanel set %i\n", ch);
+    // blink(ch, 400);
 
-    if (LoRa::configSet(17, ch)) {
-        LoRa::configGet();
-    }
+    // if (LoRa::configSet(17, ch)) {
+    // LoRa::configGet();
+    // }
     int rssi = lora_rssi(pac);
     if (rssi == -1) {
         blink(10, 250);
@@ -892,7 +977,7 @@ void lora_check_signal() {
         Serial.printf("rssi %i, 5\n", rssi);
         blink(5, 750);
     }
-    lora_activate(false);
+    // lora_activate(false);
 }
 #endif
 
@@ -1055,7 +1140,7 @@ void setup() {
 void loop() {}
 #endif
 
-#if BOARD_TYPE == 0 and NET == 0 and BOARD_REV == 2
+#if BOARD_TYPE == 0 and NET == 0
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
@@ -1134,7 +1219,7 @@ const uint32_t WORK_INTERVAL = 30UL * 60 * 1000; // 30 минут
 int iter = 0;
 void work() {
     lora_activate(false);
-    enable_power(false);
+    // enable_power(false);
     delay(100);
     Battery = readBatteryVoltage();
 
@@ -1152,7 +1237,7 @@ void work() {
     } else {
         Serial.println("   ❌ SIM activation failed");
     }
-    sim_activate(false);
+    // sim_activate(false);/
 }
 
 void setup() {
@@ -1164,15 +1249,6 @@ void setup() {
         }
     }
     Battery = readBatteryVoltage();
-    uint32_t cpu_mhz = getCpuFrequencyMhz(); // частота CPU в МГц
-    uint32_t apb_mhz = getApbFrequency();    // частота шины APB (обычно 80 МГц)
-
-    Serial.printf("CPU Frequency: %u MHz\n", cpu_mhz);
-    Serial.printf("APB Frequency: %u Hz\n", apb_mhz);
-
-    esp_reset_reason_t reason = esp_reset_reason();
-    Serial.printf("⚠️ Last reset: %d (4=WDT, 5=Brownout)\n", reason);
-    Serial.printf("Rev: %d, NET: %d\n", BOARD_REV, NET);
 
     if (stack.begin()) {
         Serial.printf("✅ Stack initialized. Current records: %d\n",
@@ -1180,14 +1256,16 @@ void setup() {
     } else {
         Serial.println("❌ Failed to init FlashStack!");
     }
+    loadConfigFromNVS();
+
     int wakebut = checkButton();
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
         // simres();
-        cleanUpStack();
+        // cleanUpStack();
         SIM_check_signal();
-        enable_sim(0);
-        enable_power(0);
+        // enable_sim(0);
+        // enable_power(0);
         lora_activate(true);
         int ch = readSwitchState() + 1;
         Serial.printf("Chanel set %i\n", ch);
@@ -1197,26 +1275,26 @@ void setup() {
         }
         lora_activate(0);
     }
-
-    // byte aa[] = {
-    //     0x53, 0x01, 0x86, 0xA3, 0x27, 0x1A, 0x05, 0x0E, 0x03, 0x07, 0x1A,
-    //     0x01, 0x01, 0x03, 0x04, 0x00, 0x00, 0x00, 0xCF, 0xBA, 0x67, 0x01,
-    //     0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0xD1, 0x09, 0x6F, 0x01, 0x03,
-    //     0x03, 0x04, 0x00, 0x00, 0x00, 0xD2, 0x59, 0xAE, 0x01, 0x04, 0x03,
-    //     0x04, 0x00, 0x00, 0x00, 0xD2, 0x2F, 0x6E, 0x01, 0x05, 0x03, 0x04,
-    //     0x00, 0x00, 0x00, 0xD3, 0xFE, 0x6E, 0x04, 0x07, 0x03, 0x0E, 0x00,
-    //     0x00, 0x00, 0xF7, 0x00, 0x00, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x00,
-    //     0x00, 0x00, 0xEB, 0xC2, 0x24, 0x87, 0xBB};
-    // // res.data[s] = (byte)port;
-    // memcpy(g_packet, aa, (int)aa[0]);
-    // printHEX(g_packet, 198);
-    // stack.write(g_packet);
+    byte aa[] = {
+        0x53, 0x01, 0x86, 0xA3, 0x27, 0x1A, 0x05, 0x0E, 0x03, 0x07, 0x1A, 0x01,
+        0x01, 0x03, 0x04, 0x00, 0x00, 0x00, 0xCF, 0xBA, 0x67, 0x01, 0x02, 0x03,
+        0x04, 0x00, 0x00, 0x00, 0xD1, 0x09, 0x6F, 0x01, 0x03, 0x03, 0x04, 0x00,
+        0x00, 0x00, 0xD2, 0x59, 0xAE, 0x01, 0x04, 0x03, 0x04, 0x00, 0x00, 0x00,
+        0xD2, 0x2F, 0x6E, 0x01, 0x05, 0x03, 0x04, 0x00, 0x00, 0x00, 0xD3, 0xFE,
+        0x6E, 0x04, 0x07, 0x03, 0x0E, 0x00, 0x00, 0x00, 0xF7, 0x00, 0x00, 0x00,
+        0x1E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xEB, 0xC2, 0x24, 0x87, 0xBB};
+    // res.data[s] = (byte)port;
+    memcpy(g_packet, aa, (int)aa[0]);
+    printHEX(g_packet, 198);
+    stack.write(g_packet);
     blink(2, 750);
     uint32_t now = millis();
     if (lastWorkTime == 0)
         lastWorkTime = now;
     if (lastSleepTime == 0)
         lastSleepTime = now;
+                SIM_check_signal();
+
     lora_activate(true);
 }
 
@@ -1275,26 +1353,30 @@ void loop() {
     yield();
 }
 
-#elif BOARD_REV == 2 and NET != 0
+#elif BOARD_REV == 3 and BOARD_TYPE == 2
 void setup() {
-    initPins();
+    // initPins();
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(ELORA, OUTPUT);
+    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+
+    pinMode(SW1_PIN, INPUT_PULLUP);
+    pinMode(SW2_PIN, INPUT_PULLUP);
     Serial.begin(115200); // монитор порта
     for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
         }
     }
-    // Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
-    // Battery = readBatteryVoltage();
-    // Serial.printf("         BATA %i", Battery);
-    RsModbus::init(REDE);
-    delay(1000);
-    if (!loadArrayFromFlash(tableSens)) {
-        for (int i = 0; i < 5; i++) {
-            tableSens[i] = 0x00; // Заполняем 0,1,2...7
-        }
-        saveArrayToFlash(tableSens);
+
+    lora_activate(true);
+    int ch = readSwitchState() + 1;
+    Serial.printf("Chanel set %i\n", ch);
+    blink(ch, 400);
+    if (LoRa::configSet(17, ch)) {
+        LoRa::configGet();
     }
+    lora_activate(0);
 
     // 4-й параметр = 1 → скрытая сеть
 
@@ -1346,60 +1428,16 @@ void setup() {
     server.begin();
 
     Serial.println("Ready: http://192.168.4.1");
-    searchSensors(1);
-    searchSensors(4);
-    enable_sens(0);
-    enable_power(0);
+    lora_activate(true);
 }
 
 int i = 0;
 float bytesToInt(uint8_t high, uint8_t low) { return ((int)high << 8) | low; }
 
 void loop() {
-    int bat = checkButton();
-    if (bat != 0) {
-        int b = (int)(((readBatteryVoltage() - 25) * 100) / 18);
-        Serial.printf("\n\nBattery  %i %%\n", b);
-
-        MeasureResult mRes = {nullptr, 0, false};
-        if (bat == 2 and tableSens[1] != 0x00) {
-            // MeasureResult res = {nullptr, 0, false};
-            mRes = measure(1); // или другой порт
-            // Serial.printf("Port %d: valid=%d, data=%p, len=%d\n",
-            // mRes.valid,mRes.data, mRes.length);
-        }
-        if (bat == 1 and tableSens[4] != 0x00) {
-            mRes = measure(4); // или другой порт
-            // Serial.printf("Port %d: valid=%d, data=%p, len=%d\n",
-            // mRes.valid,mRes.data, mRes.length);
-        }
-        printHEX(mRes.data, mRes.length);
-        if (mRes.valid and mRes.data[1] == 0x1E) {
-            Serial.printf("🌡️\tAir temperature - %.1f °C\n",
-                          bytesToInt(mRes.data[6], mRes.data[7]) / 10);
-            Serial.printf("💧\tAir humidity - %.1f %% \n",
-                          bytesToInt(mRes.data[4], mRes.data[5]) / 10);
-            Serial.printf("☀️\tIllumination - %.0f Lux\n",
-                          bytesToInt(mRes.data[8], mRes.data[9]));
-        }
-
-        if (mRes.valid and mRes.data[1] == 0x07) {
-            Serial.printf("🌡️\tSoil temperature - %.1f °C\n",
-                          bytesToInt(mRes.data[6], mRes.data[7]) / 10);
-            Serial.printf("💧\tSoil humidity - %.1f %% \n",
-                          bytesToInt(mRes.data[4], mRes.data[5]) / 10);
-            Serial.printf("⚡\tConductivity - %.0f us/cm\n",
-                          bytesToInt(mRes.data[8], mRes.data[9]));
-            Serial.printf("🧪\tpH - %.1f \n",
-                          bytesToInt(mRes.data[10], mRes.data[11] / 100));
-            // Serial.printf("🌾 Nitrogen (N) - %.0f us/cm\n",
-            //               bytesToInt(mRes.data[12], mRes.data[13]) );
-            // Serial.printf("🌻 Phosphorus (P) - %.0f us/cm\n",
-            //               bytesToInt(mRes.data[14], mRes.data[15]));
-            // Serial.printf("🍌 Potassium (K) - %.0f us/cm\n",
-            //               bytesToInt(mRes.data[16], mRes.data[17]) );
-        }
+    if (digitalRead(BUT2) == LOW) {
+        lora_check_signal();
     }
-    delay(200);
+    delay(1000);
 }
 #endif

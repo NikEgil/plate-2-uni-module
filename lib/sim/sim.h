@@ -1,6 +1,5 @@
 #pragma once
 #include <Arduino.h>
-#include <defenitions.h>
 
 #if NET > 0
 
@@ -16,7 +15,8 @@ struct NetTime {
 // Инициализация (RX, TX, Baud берутся из defenitions.h, если переданы -1/0)
 void begin(int rxPin = -1, int txPin = -1, uint32_t baud = 0);
 
-// Корректное освобождение ресурсов (вызывать перед сном или отключением питания)
+// Корректное освобождение ресурсов (вызывать перед сном или отключением
+// питания)
 void end();
 
 void activate(bool act);
@@ -46,9 +46,14 @@ int syncSystemClock();
 time_t getTimestamp();
 void buildTopic(char *outTopic, size_t size);
 
-bool mqttConnect();
+bool mqttConnect(String broker, int port, String pass) ;
 bool mqttSendPacket(const uint8_t *payload, size_t length);
 void mqttDisconnect();
-
+// -----------------------------------------------------
+// Чтение SMS (по умолчанию только новые "REC UNREAD")
+// -----------------------------------------------------
+String getUnreadSMS();
+// Удаление одного SMS по индексу (тоже временно переключает режим)
+bool deleteSMS(int index);
 } // namespace SimModule
 #endif

@@ -152,6 +152,7 @@ void configGet() {
     printParameters(configuration);
 }
 
+
 bool configSet(uint8_t channel, uint8_t address) {
     if (!initialized) {
         Serial.println("❌ LoRa not init");

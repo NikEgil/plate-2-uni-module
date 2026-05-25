@@ -71,6 +71,24 @@ constexpr int BUT2 = 9;
 constexpr int SIM_PWR = 7;
 constexpr int SW1_PIN = 6;
 constexpr int SW2_PIN = 36;
+#elif BOARD_REV == 3 and BOARD_TYPE == 2
+constexpr int EG1 = 5;
+constexpr int EG2 = 2;
+constexpr int EG3 = 3;
+constexpr int EG4 = 1;
+constexpr int EP = 4;
+constexpr int ELORA = 33;
+constexpr int ESIM = 38;
+constexpr int RS1RX = 12;
+constexpr int RS1TX = 13;
+constexpr int RS2RX = 7;
+constexpr int RS2TX = 6;
+constexpr int REDE = 11;
+constexpr int ADC = 10;
+constexpr int BUT1 = 8;
+constexpr int BUT2 = 9;
+constexpr int SW1_PIN = 35;
+constexpr int SW2_PIN = 36;
 #else
 #error "Unknown BOARD_REV"
 #endif
@@ -106,10 +124,11 @@ constexpr int MODEM_PWR_PIN = 40;
 extern const char *apn;      // Access Point Name
 extern const char *gprsUser; // GPRS username (if required)
 extern const char *gprsPass; // GPRS password (if required)
-extern const char *broker;
+// extern const char *broker;
+// extern const  int port;
 
 extern const char *IDchar;
-extern const char *pass;
+// extern const char *pass;
 
 constexpr int LORA_UART_RX = 16;
 constexpr int LORA_UART_TX = 17;

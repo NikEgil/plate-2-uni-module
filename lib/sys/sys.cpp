@@ -1,5 +1,5 @@
-#include <sys.h>
 #include <stdint.h>
+#include <sys.h>
 
 esp_adc_cal_characteristics_t adc_chars;
 Preferences preferences;
@@ -55,6 +55,31 @@ void initPins() {
     // Настраиваем пробуждение по любому из этих пинов (LOW)
     esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
 }
+#elif BOARD_REV == 3 and BOARD_TYPE == 2
+void initPins() {
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(EG1, OUTPUT);
+    pinMode(EG2, OUTPUT);
+    pinMode(EG3, OUTPUT);
+    pinMode(EG4, OUTPUT);
+    pinMode(ESIM, OUTPUT);
+    pinMode(EP, OUTPUT);
+    pinMode(ELORA, OUTPUT);
+    pinMode(ADC, INPUT);
+    analogReadResolution(13);
+    analogSetAttenuation(ADC_6db);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
+                             &adc_chars);
+    pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
+
+    pinMode(SW1_PIN, INPUT_PULLUP);
+    pinMode(SW2_PIN, INPUT_PULLUP);
+    // Настраиваем пробуждение по любому из этих пинов (LOW)
+    esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
+}
+
 #elif BOARD_REV == 3 and BOARD_TYPE == 1
 void initPins() {
     pinMode(LED_PIN, OUTPUT);
@@ -414,18 +439,18 @@ void activate_sim(bool act) {
         return;
     }
     if (act) {
-        digitalWrite(ESIM, HIGH);
-        delay(100);
-        enable_power(true);
-        Serial.println("SIM ON");
         digitalWrite(ESIM, LOW);
+        delay(1000);
+        // enable_power(true);
+        Serial.println("SIM ON");
+        digitalWrite(ESIM, HIGH);
         isSimEnable = true;
     } else {
-        digitalWrite(ESIM, HIGH);
-        delay(2000);
-        enable_power(false);
-        Serial.println("SIM OFF");
         digitalWrite(ESIM, LOW);
+        delay(2000);
+        // enable_power(false);
+        Serial.println("SIM OFF");
+        digitalWrite(ESIM, HIGH);
         isSimEnable = false;
     }
 }
@@ -472,7 +497,6 @@ void outCRC(byte req[], int dataLength, byte outcrc[]) {
     outcrc[0] = crc & 0xFF;        // LSB
     outcrc[1] = (crc >> 8) & 0xFF; // MSB
 }
-
 
 uint8_t crc8_wh65lp(const uint8_t *data, uint8_t len) {
     uint8_t crc = 0x00;
