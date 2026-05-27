@@ -585,7 +585,7 @@ bool processOneSMS(const String &text) {
         return true;
     }
 }
-void readSMS() {
+bool readSMS() {
     String sms = "  ";
     Serial.println("read sms");
     while (sms != "") {
@@ -597,10 +597,11 @@ void readSMS() {
             memcpy(g_packet, aa, (int)aa[0]);
             printHEX(g_packet, 198);
             stack.write(g_packet);
-            // mqtt_send();
+            return true;
         }
     }
     Serial.println("ALL SMS READED");
+    return false;
 }
 
 bool sim_activate(bool act) {
@@ -609,26 +610,31 @@ bool sim_activate(bool act) {
         SimModule::disconnect();
         SimModule::activate(false);
         SimModule::end();
-        // enable_sim(false);
-        // enable_power(false);
-        activate_sim(false);
-        // enable_power(false);
+        enable_sim(false);
+        enable_power(false);
+
+        // activate_sim(false);
 
         Serial.println("\tsim disconnected");
         return true;
     }
 
     // --- Включение с несколькими раундами ---
-    const int MAX_ROUNDS = 2;                // максимум 3 попытки
-    const unsigned long ROUND_DELAY = 10000; // 5 секунд между раундами
-        activate_sim(0);
+    const int MAX_ROUNDS = 2;               // максимум 3 попытки
+    const unsigned long ROUND_DELAY = 3000; // 5 секунд между раундами
+            Serial.println("try conect0");
+
+    // activate_sim(false);
 
     for (int round = 1; round <= MAX_ROUNDS; round++) {
         Serial.printf("=== Round %d/%d ===\n", round, MAX_ROUNDS);
         yield();
 
-        activate_sim(1);
-        // enable_sim(1);
+        // activate_sim(true);
+
+        enable_power(1);
+        delay(2000);
+        enable_sim(1);
         // // 2. Ждём загрузки модуля
         delay(10000);
         esp_task_wdt_reset();
@@ -656,7 +662,7 @@ bool sim_activate(bool act) {
                 getNetTime();
             }
             blink(1, 1000);
-            readSMS();
+            if(readSMS()){mqtt_send();}
             return true;
         }
 
@@ -666,12 +672,10 @@ bool sim_activate(bool act) {
         SimModule::disconnect();
         SimModule::activate(false);
         SimModule::end();
-        // enable_sim(false);
+        enable_sim(false);
 
         delay(ROUND_DELAY);
     }
-
-    activate_sim(0);
 
     Serial.println("All rounds failed");
     return false;
@@ -1034,6 +1038,7 @@ void setup() {
     } else {
         Serial.println("❌ Failed to init FlashStack!");
     }
+    loadConfigFromNVS();
 
     uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
@@ -1237,7 +1242,7 @@ void work() {
     } else {
         Serial.println("   ❌ SIM activation failed");
     }
-    // sim_activate(false);/
+    sim_activate(false);
 }
 
 void setup() {
@@ -1257,12 +1262,14 @@ void setup() {
         Serial.println("❌ Failed to init FlashStack!");
     }
     loadConfigFromNVS();
-
     int wakebut = checkButton();
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
         // simres();
-        // cleanUpStack();
+        // activate_sim(false);
+        cleanUpStack();
+                activate_sim(false);
+
         SIM_check_signal();
         // enable_sim(0);
         // enable_power(0);
@@ -1275,14 +1282,8 @@ void setup() {
         }
         lora_activate(0);
     }
-    byte aa[] = {
-        0x53, 0x01, 0x86, 0xA3, 0x27, 0x1A, 0x05, 0x0E, 0x03, 0x07, 0x1A, 0x01,
-        0x01, 0x03, 0x04, 0x00, 0x00, 0x00, 0xCF, 0xBA, 0x67, 0x01, 0x02, 0x03,
-        0x04, 0x00, 0x00, 0x00, 0xD1, 0x09, 0x6F, 0x01, 0x03, 0x03, 0x04, 0x00,
-        0x00, 0x00, 0xD2, 0x59, 0xAE, 0x01, 0x04, 0x03, 0x04, 0x00, 0x00, 0x00,
-        0xD2, 0x2F, 0x6E, 0x01, 0x05, 0x03, 0x04, 0x00, 0x00, 0x00, 0xD3, 0xFE,
-        0x6E, 0x04, 0x07, 0x03, 0x0E, 0x00, 0x00, 0x00, 0xF7, 0x00, 0x00, 0x00,
-        0x1E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xEB, 0xC2, 0x24, 0x87, 0xBB};
+    byte aa[] = {0x0A, 0x11, 0x11, 0x11, 0x11, 0x11,
+                    0x11, 0x11, 0x11, 0x11, 0x11};
     // res.data[s] = (byte)port;
     memcpy(g_packet, aa, (int)aa[0]);
     printHEX(g_packet, 198);
@@ -1293,8 +1294,6 @@ void setup() {
         lastWorkTime = now;
     if (lastSleepTime == 0)
         lastSleepTime = now;
-                SIM_check_signal();
-
     lora_activate(true);
 }
 

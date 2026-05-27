@@ -85,6 +85,7 @@ void initPins() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(ESIM, OUTPUT);
     pinMode(EP, OUTPUT);
+
     pinMode(ELORA, OUTPUT);
     pinMode(SIM_PWR, OUTPUT);
     // настройка для измерения батареи
@@ -435,23 +436,19 @@ void enable_sim(bool act) {
 }
 
 void activate_sim(bool act) {
-    if (act == isSimEnable) {
-        return;
-    }
-    if (act) {
-        digitalWrite(ESIM, LOW);
+    if (act==true) {
+        digitalWrite(EP, LOW);
+        Serial.println("SIM ON");
+
         delay(1000);
         // enable_power(true);
-        Serial.println("SIM ON");
-        digitalWrite(ESIM, HIGH);
-        isSimEnable = true;
+        digitalWrite(EP, HIGH);
     } else {
-        digitalWrite(ESIM, LOW);
-        delay(2000);
-        // enable_power(false);
+        digitalWrite(EP, LOW);
         Serial.println("SIM OFF");
-        digitalWrite(ESIM, HIGH);
-        isSimEnable = false;
+        delay(3000);
+        // enable_power(false);
+        digitalWrite(EP, HIGH);
     }
 }
 #endif

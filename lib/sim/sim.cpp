@@ -531,6 +531,10 @@ bool mqttConnect(String broker, int port, String pass) {
     modem->waitResponse(500);
     Serial.print("Opening TCP connection... ");
     unsigned long tcpStart = millis();
+    Serial.println(broker.c_str());
+    Serial.println(port);
+    Serial.println(IDchar);
+    Serial.println(pass);
     bool tcpOk = client->connect(broker.c_str(), port, 10000); // 10 секунд
     unsigned long tcpElapsed = millis() - tcpStart;
     Serial.printf("[%lu ms] %s\n", tcpElapsed, tcpOk ? "OK" : "FAIL");
