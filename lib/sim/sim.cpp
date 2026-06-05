@@ -2,7 +2,7 @@
 #define TINY_GSM_DEBUG Serial
 #define MQTT_SOCKET_TIMEOUT 30
 #include "sim.h"
-#include <PubSubClient.h>
+// #include <HttpClient.h>
 #include <SoftwareSerial.h>
 #include <TinyGsmClient.h>
 #include <defenitions.h>
@@ -14,17 +14,13 @@ namespace {
 HardwareSerial *simSerial = nullptr; // используем UART1
 TinyGsm *modem = nullptr;
 TinyGsmClient *client = nullptr;
-PubSubClient *mqtt = nullptr;
 bool isActive = false;
 bool isGprsConnected = false;
-
 } // namespace
 
 namespace SimModule {
 void begin(int rxPin, int txPin, uint32_t baud) {
-    // 1. Принудительная очистка предыдущего состояния
     end();
-    // 2. Параметры по умолчанию
     if (rxPin == -1)
         rxPin = SIMRX;
     if (txPin == -1)
@@ -34,102 +30,84 @@ void begin(int rxPin, int txPin, uint32_t baud) {
     Serial.println("\n=== [SIM] begin() (HardwareSerial) ===");
     Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin,
                   baud);
-    // 3. Инициализируем аппаратный UART (Serial1)
+
     simSerial = &Serial1;
     simSerial->begin(baud, SERIAL_8N1, rxPin, txPin);
     simSerial->setTimeout(1000);
-    // 4. Создаём объекты TinyGSM
+
     modem = new TinyGsm(*simSerial);
     client = new TinyGsmClient(*modem);
-    modem->sendAT(GF("E0")); // выключаем эхо
+
+    // Лямбда для полной очистки буфера
+    auto flush = [&]() {
+        while (simSerial->available()) {
+            String junk = simSerial->readStringUntil('\n');
+            if (junk.length())
+                Serial.print("[FLUSH] ");
+            Serial.println(junk);
+        }
+    };
+
+    // Отключаем эхо
+    modem->sendAT(GF("E0"));
     modem->waitResponse(500);
-    modem->sendAT(GF("+CMGF=1")); // текстовый режим SMS (обычно не нужно)
+    flush();
+
+    // Текстовый режим SMS (не нужен, но оставим)
+    modem->sendAT(GF("+CMGF=1"));
     modem->waitResponse(500);
-    modem->sendAT(GF("+CNMI=0,0,0,0,0")); // отключаем индикацию новых сообщений
+    flush();
+
+    // Отключаем уведомления о новых SMS
+    modem->sendAT(GF("+CNMI=0,0,0,0,0"));
     modem->waitResponse(500);
-    modem->sendAT(GF("+CREG=0")); // отключаем URC о регистрации в сети
+    flush();
+
+    // Отключаем URC о регистрации в сети
+    modem->sendAT(GF("+CREG=0"));
     modem->waitResponse(500);
-    modem->sendAT(GF("+CGREG=0")); // отключаем URC о GPRS-регистрации
+    flush();
+
+    // Отключаем URC о GPRS-регистрации
+    modem->sendAT(GF("+CGREG=0"));
     modem->waitResponse(500);
-    modem->sendAT(GF("+CSCLK=0")); // отключаем slow clock (может влиять)
+    flush();
+
+    // Отключаем slow clock
+    modem->sendAT(GF("+CSCLK=0"));
     modem->waitResponse(500);
-    modem->sendAT(GF("+CIPTIMEOUT=20"));
+    flush();
+
+    // ОТКЛЮЧАЕМ ВСЕ URC ДЛЯ TCP/IP (важно!)
+    modem->sendAT(GF(
+        "+CIPRXGET=0")); // отключаем автоматические уведомления о приёме данных
+    modem->waitResponse(500);
+    flush();
+
+    modem->sendAT(
+        GF("+CIPHEAD=1")); // добавлять IP-заголовок (не влияет на URC)
+    modem->waitResponse(500);
+    flush();
+
+    modem->sendAT(
+        GF("+CIPSTATUS=0")); // отключаем автоматический вывод статуса сокета
+    modem->waitResponse(500);
+    flush();
+
+    modem->sendAT(GF("+CIPTIMEOUT=20000,20000,20000"));
     modem->waitResponse(1000);
+    flush();
+
     modem->sendAT(GF("&W"));
     modem->waitResponse(1000);
-    mqtt = new PubSubClient(*client);
-    mqtt->setSocketTimeout(MQTT_SOCKET_TIMEOUT);
-    mqtt->setKeepAlive(60);
-    mqtt->setBufferSize(512);
+    flush();
+
     Serial.println("=== [SIM] begin() SUCCESS ===");
 }
-// void begin(int rxPin, int txPin, uint32_t baud) {
-//     // 1. Принудительная очистка, если пользователь забыл вызвать end()
-//     end();
-//     // 2. Параметры по умолчанию
-//     if (rxPin == -1)
-//         rxPin = SIMRX;
-//     if (txPin == -1)
-//         txPin = SIMTX;
-//     if (baud == 0)
-//         baud = SIM_BAUD;
-//     Serial.println("\n=== [SIM] begin() START ===");
-//     Serial.printf("[SIM] Parameters: RX=%d, TX=%d, Baud=%lu\n", rxPin, txPin,
-//                   baud);
-//     // 3. Создание объектов
-//     simSerial = new SoftwareSerial(rxPin, txPin);
-//     // Временно увеличиваем таймаут WDT на время настройки
-//     esp_task_wdt_init(10, false);
-//     simSerial->begin(baud);
-//     esp_task_wdt_init(8, true); // возврат к стандартным 8 сек
-//     simSerial->setTimeout(1000);
-//     modem = new TinyGsm(*simSerial);
-//     client = new TinyGsmClient(*modem);
-//     // Устанавливаем таймаут TCP-соединения 20 секунд и сохраняем
-//     modem->sendAT(GF("+CIPTIMEOUT=20"));
-//     modem->waitResponse(1000);
-//     modem->sendAT(GF("&W"));
-//     modem->waitResponse(1000);
-//     mqtt = new PubSubClient(*client);
-//     mqtt->setSocketTimeout(MQTT_SOCKET_TIMEOUT);
-//     mqtt->setKeepAlive(60);
-//     mqtt->setBufferSize(512);
-//     Serial.println("=== [SIM] begin() SUCCESS ===");
-// }
 
-//-----------------------------------------------------
-// end() – освобождение ресурсов
-//-----------------------------------------------------
-// void end() {
-//     Serial.println("[SIM] end() – releasing resources");
-//     if (mqtt) {
-//         mqtt->disconnect();
-//         delete mqtt;
-//         mqtt = nullptr;
-//     }
-//     if (client) {
-//         delete client;
-//         client = nullptr;
-//     }
-//     if (modem) {
-//         delete modem;
-//         modem = nullptr;
-//     }
-//     if (simSerial) {
-//         simSerial->end();
-//         delete simSerial;
-//         simSerial = nullptr;
-//     }
-//     isActive = false;
-//     isGprsConnected = false;
-// }
 void end() {
     Serial.println("[SIM] end() – releasing resources");
-    if (mqtt) {
-        mqtt->disconnect();
-        delete mqtt;
-        mqtt = nullptr;
-    }
+
     if (client) {
         delete client;
         client = nullptr;
@@ -493,132 +471,12 @@ time_t getTimestamp() {
     return mktime(&timeinfo);
 }
 
-void buildTopic(char *outTopic, size_t size) {
-    snprintf(outTopic, size, "mqtt/devices/%s/data", IDchar);
-}
-bool mqttConnect(String broker, int port, String pass) {
-    Serial.println("        try mqtt connect");
-    if (!mqtt || !client || !modem) {
-        Serial.println("❌ MQTT components not initialized");
-        return false;
-    }
-    if (mqtt->connected()) {
-        Serial.println("✅ Already connected");
-        return true;
-    }
-    if (!modem->isGprsConnected()) {
-        Serial.println("⚠️ GPRS not connected, skipping MQTT");
-        return false;
-    }
-    String ip;
-    for (int i = 0; i < 10; i++) {
-        ip = modem->getLocalIP();
-        if (ip.length() > 0)
-            break;
-        delay(500);
-        yield();
-    }
-    if (ip.length() == 0) {
-        Serial.println("No IP address");
-        return false;
-    }
-    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(), ip.c_str());
-    if (client->connected()) {
-        client->stop();
-        delay(100);
-    }
-    modem->sendAT(GF("+CIPTIMEOUT=10"));
-    modem->waitResponse(500);
-    Serial.print("Opening TCP connection... ");
-    unsigned long tcpStart = millis();
-    Serial.println(broker.c_str());
-    Serial.println(port);
-    Serial.println(IDchar);
-    Serial.println(pass);
-    bool tcpOk = client->connect(broker.c_str(), port, 10000); // 10 секунд
-    unsigned long tcpElapsed = millis() - tcpStart;
-    Serial.printf("[%lu ms] %s\n", tcpElapsed, tcpOk ? "OK" : "FAIL");
-    if (!tcpOk) {
-        Serial.println("TCP connection failed, aborting MQTT");
-        client->stop(); // на всякий случай
-        return false;
-    }
-    mqtt->setServer(broker.c_str(), 1883);
-    mqtt->setSocketTimeout(10); // таймаут на пакеты MQTT
-    mqtt->setKeepAlive(60);
-    mqtt->setBufferSize(512);
-    Serial.printf("Signal: %d%%, IP: %s\n", getSignalQuality(), ip.c_str());
-    Serial.print("Starting MQTT handshake... ");
-    unsigned long mqttStart = millis();
-    bool status = mqtt->connect(IDchar, IDchar, pass.c_str());
-    unsigned long mqttElapsed = millis() - mqttStart;
-    Serial.printf("[%lu ms] %s\n", mqttElapsed, status ? "SUCCESS" : "FAILED");
-    if (!status) {
-        int rc = mqtt->state();
-        Serial.printf("MQTT error: rc=%d\n", rc);
-        client->stop();
-        return false;
-    }
-    mqtt->loop();
-    return true;
-}
-
-bool mqttSendPacket(const uint8_t *payload, size_t length) {
-    if (!mqtt) {
-        Serial.println("❌ MQTT object not initialized");
-        return false;
-    }
-    if (!mqtt->connected()) {
-        Serial.println("MQTT not connected, trying to reconnect...");
-        // if (!mqttConnect()) {
-        //     Serial.println("Reconnection failed");
-        //     return false;
-        // }
-    }
-    char topic[64];
-    buildTopic(topic, sizeof(topic));
-    Serial.printf("📡 Sending %d bytes to %s ... ", length, topic);
-    bool result = mqtt->publish(topic, payload, length);
-    mqtt->loop();
-    if (!result) {
-        Serial.println("FAIL (publish failed)");
-        //     client->stop();
-        //     delay(100);
-        //     // if (mqttConnect()) {
-        //         result = mqtt->publish(topic, payload, length);
-        //         mqtt->loop();
-        //     }
-    }
-    Serial.println(result ? "OK" : "FAIL");
-    return result;
-}
-
-void mqttDisconnect() {
-    if (mqtt) {
-        if (mqtt->connected()) {
-            mqtt->disconnect();
-        }
-    }
-    if (client) {
-        client->stop(); // гарантированно рвём TCP
-    }
-    Serial.println("MQTT disconnected");
-}
 // -----------------------------------------------------
 // Получить текст первого непрочитанного SMS (без удаления)
 // -----------------------------------------------------
 String getUnreadSMS() {
     if (!modem || !isActive)
         return "";
-
-    // // 1. Временный текстовый режим
-    // modem->sendAT(GF("+CMGF=1"));
-    // if (modem->waitResponse(1000) != 1) {
-    //     modem->sendAT(GF("+CMGF=0"));
-    //     modem->waitResponse(500);
-    //     return "";
-    // }
-
     // 2. Запросить список непрочитанных
     modem->sendAT(GF("+CMGL=\"REC UNREAD\""));
     String response;
@@ -627,22 +485,18 @@ String getUnreadSMS() {
         modem->waitResponse(500);
         return "";
     }
-
     // 3. Найти первый блок +CMGL: ...
     int pos = response.indexOf("+CMGL:");
     if (pos == -1) {
-        //     modem->sendAT(GF("+CMGF=0"));
-        //     modem->waitResponse(500);
+
         return ""; // нет непрочитанных
     }
-
     // Индекс SMS (не обязателен для возврата, но пригодится при удалении)
     int idx1 = response.indexOf(':', pos);
     int idx2 = response.indexOf(',', idx1);
     int smsIndex = (idx1 != -1 && idx2 != -1)
                        ? response.substring(idx1 + 1, idx2).toInt()
                        : -1;
-
     // 4. Текст сообщения – начинается со следующей строки после заголовка
     int lineEnd = response.indexOf('\n', pos);
     if (lineEnd == -1)
@@ -662,29 +516,281 @@ String getUnreadSMS() {
         text += nextLine;
         textPos = nextLineEnd + 1;
     }
-
-    // 5. Вернуть PDU-режим обратно
-    // modem->sendAT(GF("+CMGF=0"));
-    // modem->waitResponse(500);
-
-    // (Опционально) удалить прочитанное SMS
     modem->sendAT("+CMGD=" + String(smsIndex));
     modem->waitResponse(1000);
-
     return text;
 }
 // Удаление одного SMS по индексу (тоже временно переключает режим)
 bool deleteSMS(int index) {
     if (!modem)
         return false;
-    // modem->sendAT(GF("+CMGF=1"));
-    // modem->waitResponse(500);
     String cmd = "+CMGD=" + String(index);
     modem->sendAT(cmd);
     int8_t res = modem->waitResponse(1000);
-    // modem->sendAT(GF("+CMGF=0"));
-    // modem->waitResponse(500);
+
     return (res == 1);
+}
+
+
+void stop() {
+    if (client->connected()) {
+        Serial.println("[HTTP] Closing previous connection");
+        client->stop();
+        delay(200);
+    }
+}
+
+// ========== Внутренние переменные состояния ==========
+static bool _httpConnected = false;
+static String _httpHost;
+static int _httpPort;
+
+// ========== Вспомогательная функция: очистка мусора из UART ==========
+static void clearModemBuffer() {
+    unsigned long start = millis();
+    while (millis() - start < 500) {
+        if (simSerial->available()) {
+            String line = simSerial->readStringUntil('\n');
+            if (line.length()) {
+                Serial.print("[CLEAR] ");
+                Serial.println(line);
+            }
+        } else {
+            delay(5);
+        }
+    }
+    // Добиваем всё, что осталось
+    while (simSerial->available()) {
+        simSerial->read();
+    }
+}
+
+// ========== Чтение HTTP-ответа до последнего байта ==========
+static bool readFullHttpResponse(int &outCode) {
+    outCode = -1;
+    if (!client || !client->connected()) return false;
+
+    unsigned long timeout = millis() + 20000;
+    int contentLength = -1;
+    bool headersComplete = false;
+
+    // Читаем заголовки построчно
+    while (!headersComplete && millis() < timeout) {
+        if (!client->available()) {
+            delay(10);
+            yield();
+            continue;
+        }
+        String line = client->readStringUntil('\n');
+        line.trim();
+
+        if (line.startsWith("HTTP/") && outCode == -1) {
+            int sp1 = line.indexOf(' ');
+            int sp2 = line.indexOf(' ', sp1 + 1);
+            if (sp1 != -1 && sp2 != -1) {
+                outCode = line.substring(sp1 + 1, sp2).toInt();
+            }
+        }
+
+        if (line.length() == 0) {
+            headersComplete = true;
+        }
+        if (line.startsWith("Content-Length:")) {
+            contentLength = line.substring(15).toInt();
+        }
+    }
+
+    if (!headersComplete) {
+        Serial.println("[HTTP] Headers timeout");
+        return false;
+    }
+
+    // Читаем тело ответа, если есть Content-Length
+    if (contentLength > 0) {
+        uint8_t buf[256];
+        int totalRead = 0;
+        while (totalRead < contentLength && millis() < timeout) {
+            if (client->available()) {
+                int toRead = min((int)sizeof(buf), contentLength - totalRead);
+                int r = client->read(buf, toRead);
+                if (r > 0) totalRead += r;
+            } else {
+                delay(10);
+                yield();
+            }
+        }
+        if (totalRead < contentLength) {
+            Serial.printf("[HTTP] Incomplete body: %d/%d\n", totalRead, contentLength);
+            return false;
+        }
+    }
+
+    // Дополнительная очистка буфера модема после ответа
+    clearModemBuffer();
+
+    // Успех, если код 200 или 202
+    return (outCode == 200 || outCode == 202);
+}
+
+// ========== 1. Установка TCP-соединения (улучшенная) ==========
+bool httpBegin(const char *host) {
+    int port = 80;
+    if (_httpConnected && client && client->connected()) {
+        // Проверяем живость соединения дополнительно (AT+CIPSTATUS)
+        modem->sendAT("AT+CIPSTATUS");
+        String statusResp;
+        if (modem->waitResponse(1000, statusResp) == 1) {
+            // Если есть активное соединение и оно не в состоянии "CLOSED"
+            if (statusResp.indexOf("CONNECT OK") >= 0 ||
+                statusResp.indexOf("STATE: CONNECT") >= 0) {
+                return true;
+            }
+        }
+        // Если проверка не удалась – закроем и пересоздадим
+        httpEnd();
+    }
+
+    clearModemBuffer();
+
+    if (!modem->isGprsConnected()) {
+        Serial.println("[HTTP] GPRS not connected");
+        return false;
+    }
+
+    Serial.printf("[HTTP] Connecting to %s:%d ...\n", host, port);
+    if (!client->connect(host, port)) {
+        Serial.println("[HTTP] TCP connection failed");
+        return false;
+    }
+    // Даём модему время выдать CONNECT
+    delay(1500);
+    clearModemBuffer();  // убираем технические строки
+
+    _httpHost = host;
+    _httpPort = port;
+    _httpConnected = true;
+    Serial.println("[HTTP] Connected");
+    return true;
+}
+
+// ========== 2. Отправка одного POST-пакета (без чтения ответа) ==========
+bool httpSendPacket(const uint8_t *payload, size_t length,
+                    const char *deviceId,
+                    const char *path) {
+    if (!_httpConnected || !client->connected()) {
+        Serial.println("[HTTP] Not connected, call httpBegin() first");
+        return false;
+    }
+
+    clearModemBuffer();
+
+    String request;
+    request.reserve(256 + length);
+    request = "POST " + String(path) + " HTTP/1.1\r\n";
+    request += "Host: " + _httpHost + "\r\n";
+    request += "Content-Type: application/octet-stream\r\n";
+    request += "X-Device-Id: " + String(deviceId) + "\r\n";
+    request += "Content-Length: " + String(length) + "\r\n";
+    request += "Connection: keep-alive\r\n";
+    request += "\r\n";
+
+    // Отправляем заголовки
+    size_t sent = client->print(request);
+    if (sent != request.length()) {
+        Serial.printf("[HTTP] Header send error: sent %u of %u\n", sent, request.length());
+        return false;
+    }
+    // Отправляем тело
+    client->write(payload, length);
+
+    // Даём немного времени на отправку, проверяя URC
+    unsigned long timeout = millis() + 20000;
+    while (!client->available() && millis() < timeout) {
+        if (simSerial->available()) {
+            String urc = simSerial->readStringUntil('\n');
+            Serial.print("[URC] ");
+            Serial.println(urc);
+        }
+        delay(10);
+        yield();
+    }
+
+    if (!client->available()) {
+        Serial.println("[HTTP] No response (timeout)");
+        return false;
+    }
+    return true;
+}
+
+// ========== 3. Надёжная отправка с авто-переподключением и повторами ==========
+bool httpSendPacketSafe(const uint8_t *payload, size_t length,
+                        const char *deviceId, const char *path,
+                        const char *host) {
+    const int maxRetries = 2;
+    for (int attempt = 0; attempt <= maxRetries; ++attempt) {
+        // Проверяем здоровье сети и GPRS
+        if (!modem || !isActive) return false;
+
+        if (!modem->isGprsConnected()) {
+            Serial.println("[HTTP] GPRS lost, reconnecting...");
+
+            if (!connect(apn, gprsUser, gprsPass)) {
+                Serial.println("[HTTP] GPRS reconnect failed");
+                delay(2000);
+                continue;
+            }
+        }
+
+        // // Если нет активного TCP – открываем
+        if (!_httpConnected || !client || !client->connected()) {
+            httpEnd();
+            if (!httpBegin(host)) {
+                Serial.println("[HTTP] TCP connect failed, retry...");
+                delay(3000);
+                continue;
+            }
+        }
+
+        // Отправляем запрос
+        if (!httpSendPacket(payload, length, deviceId, path)) {
+            httpEnd();  // разрыв, будем пробовать заново
+            delay(500);
+            continue;
+        }
+
+        // Читаем ответ до конца
+        int httpCode = -1;
+        if (!readFullHttpResponse(httpCode)) {
+            httpEnd();
+            delay(500);
+            continue;
+        }
+
+        // Проверяем код ответа
+        if (httpCode == 200 || httpCode == 202) {
+            return true;
+        } else {
+            Serial.printf("[HTTP] Bad response code: %d\n", httpCode);
+            httpEnd();
+            delay(500);
+            continue;
+        }
+    }
+    Serial.println("[HTTP] All attempts failed");
+    return false;
+}
+
+// ========== 4. Корректное закрытие TCP ==========
+void httpEnd() {
+    if (client) {
+        client->stop();
+        delay(100);
+        clearModemBuffer();
+    }
+    _httpConnected = false;
+    _httpHost = "";
+    _httpPort = 0;
+    Serial.println("[HTTP] Connection closed");
 }
 
 } // namespace SimModule

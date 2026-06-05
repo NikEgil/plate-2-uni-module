@@ -103,6 +103,29 @@ void initPins() {
     // Настраиваем пробуждение по любому из этих пинов (LOW)
     esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
 }
+#elif BOARD_REV == 1 and BOARD_TYPE == 1
+void initPins() {
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(ESIM, OUTPUT);
+    // pinMode(EP, OUTPUT);
+
+    pinMode(ELORA, OUTPUT);
+    // pinMode(SIM_PWR, OUTPUT);
+    // настройка для измерения батареи
+    pinMode(ADC, INPUT);
+    analogReadResolution(13);
+    analogSetAttenuation(ADC_6db);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
+                             &adc_chars);
+    // pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    // pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    // uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
+
+    pinMode(SW1_PIN, INPUT_PULLUP);
+    pinMode(SW2_PIN, INPUT_PULLUP);
+    // Настраиваем пробуждение по любому из этих пинов (LOW)
+    // esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
+}
 
 #endif
 byte rssip(byte rssi) {
@@ -136,6 +159,7 @@ uint8_t readSwitchState() {
     // return 0xFF; // Специальный код: "нет изменений" (можно игнорировать)
 }
 
+#if BOARD_REV == 3
 uint8_t checkButton() {
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
 
@@ -177,7 +201,21 @@ void waitForButtonRelease() {
         delay(10);
     }
 }
+#elif BOARD_REV == 1
+uint8_t checkButton() {
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
 
+    // 🔹 3: Холодный старт (подача питания / нажатие RESET)
+    if (cause == ESP_SLEEP_WAKEUP_UNDEFINED) {
+        return 3;
+    }
+
+    // 🔹 0: Таймер или другая причина (обычный рабочий цикл)
+    return 0;
+}
+
+
+#endif
 void sleep(int time) {
     esp_sleep_enable_timer_wakeup(time * uS_TO_S_FACTOR);
     Serial.printf("                 Sleep %i sec", time);
@@ -401,7 +439,7 @@ void enable_sim(bool act) {
         isSimEnable = false;
     }
 }
-#elif NET == 2
+#elif NET == 2 and BOARD_REV == 3
 void enable_lora(bool act) {
     if (act == isLoraEnable) {
         return;
@@ -436,7 +474,7 @@ void enable_sim(bool act) {
 }
 
 void activate_sim(bool act) {
-    if (act==true) {
+    if (act == true) {
         digitalWrite(EP, LOW);
         Serial.println("SIM ON");
 
@@ -449,6 +487,56 @@ void activate_sim(bool act) {
         delay(3000);
         // enable_power(false);
         digitalWrite(EP, HIGH);
+    }
+}
+#elif NET == 2 and BOARD_REV == 1
+void enable_lora(bool act) {
+    // if (act == isLoraEnable) {
+    //     return;
+    // }
+    // if (act) {
+    //     digitalWrite(ELORA, HIGH);
+    //     delay(200);
+    Serial.println("LORA ON");
+    //     isLoraEnable = true;
+    // } else {
+    //     digitalWrite(ELORA, LOW);
+    //     delay(200);
+    //     Serial.println("LORA OFF");
+    //     isLoraEnable = false;
+    // }
+}
+void enable_sim(bool act) {
+    // if (act == isSimEnable) {
+    //     return;
+    // }
+    // if (act) {
+    //     digitalWrite(ESIM, HIGH);
+    //     delay(1000);
+    Serial.println("SIM ON");
+    //     isSimEnable = true;
+    // } else {
+    //     digitalWrite(ESIM, LOW);
+    //     delay(1000);
+    //     Serial.println("SIM OFF");
+    //     isSimEnable = false;
+    // }
+}
+
+void activate_sim(bool act) {
+    if (act==true) {
+        digitalWrite(ESIM, LOW);
+    Serial.println("SIM ON");
+
+        delay(1000);
+        // enable_power(true);
+        digitalWrite(ESIM, HIGH);
+    } else {
+        digitalWrite(ESIM, LOW);
+        Serial.println("SIM OFF");
+        delay(3000);
+        // enable_power(false);
+        digitalWrite(ESIM, HIGH);
     }
 }
 #endif

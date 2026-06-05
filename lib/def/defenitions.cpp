@@ -1,6 +1,6 @@
 #include <defenitions.h>
 const int activeport[] = {1, 4};
-const int ID = 20002; // ваша глобальная переменная
+const int ID = 24; // ваша глобальная переменная
 
 // Глобальные константы, инициализированные в зависимости от ID
 const CalPoint CAL_LOW = (ID == 21)   ? CalPoint{3575, 3.047}
@@ -47,7 +47,7 @@ const char *gprsPass = "mts";   // GPRS password (if required)
 // const char *broker = "158.160.240.169";
 // const int port = 1883;
 
-const char *IDchar = "00020002";
+const char *IDchar = "00000024";
 // const char *pass = "GMSL00000024";
 
 #endif
