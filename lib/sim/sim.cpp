@@ -342,26 +342,21 @@ NetTime getNetworkTime() {
     if (!isActive || !modem)
         return result;
 
-    // Очистить буфер модема перед командой
-    // modem->waitResponse(0);  // вычитать все накопившиеся данные
-
     modem->sendAT(GF("+CCLK?"));
     String res;
-    int8_t status = modem->waitResponse(5000, res); // увеличенный таймаут 5 с
+    int8_t status = modem->waitResponse(5000, res);
     if (status != 1) {
         Serial.printf("[SIM] getNetworkTime: no response (status=%d)\n",
                       status);
         return result;
     }
 
-    // Ищем подстроку "+CCLK: "
     int cclkPos = res.indexOf("+CCLK: ");
     if (cclkPos < 0) {
         Serial.println("[SIM] getNetworkTime: '+CCLK: ' not found");
         return result;
     }
 
-    // Находим кавычки вокруг времени
     int q1 = res.indexOf('"', cclkPos);
     if (q1 < 0) {
         Serial.println("[SIM] getNetworkTime: opening quote not found");
@@ -374,9 +369,7 @@ NetTime getNetworkTime() {
     }
 
     String timeStr = res.substring(q1 + 1, q2);
-    // timeStr имеет формат "YY/MM/DD,HH:MM:SS+TZ" (например,
-    // "25/05/14,12:30:45+12")
-
+    // Ожидаемый формат: "YY/MM/DD,HH:MM:SS+TZ" (пример: "25/05/14,12:30:45+12")
     int year, month, day, hour, minute, second, tz;
     char tzSign;
     int fields = sscanf(timeStr.c_str(), "%d/%d/%d,%d:%d:%d%c%d", &year, &month,
@@ -390,11 +383,11 @@ NetTime getNetworkTime() {
     }
 
     if (tzSign == '-')
-        tz = -tz;
+        tz = -tz; // tz в четвертях часа
     if (year < 100)
         year += 2000;
 
-    // Проверка разумности значений
+    // Проверка разумности
     if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 ||
         hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
         Serial.printf("[SIM] getNetworkTime: invalid date/time: %04d-%02d-%02d "
@@ -403,19 +396,111 @@ NetTime getNetworkTime() {
         return result;
     }
 
-    result.year = year;
-    result.month = month;
-    result.day = day;
-    result.hour = hour;
-    result.minute = minute;
-    result.second = second;
-    result.timezone = tz; // в четвертях часа
+    // Смещение в минутах: каждая четверть часа = 15 минут
+    int offset_minutes =
+        tz * 15; // положительное, если локальное время впереди UTC
+
+    // Формируем struct tm из локального времени сети
+    struct tm t_local = {0};
+    t_local.tm_year = year - 1900;
+    t_local.tm_mon = month - 1;
+    t_local.tm_mday = day;
+    t_local.tm_hour = hour;
+    t_local.tm_min = minute;
+    t_local.tm_sec = second;
+    t_local.tm_isdst = -1; // неизвестно
+
+    // Сохраняем текущую зону, чтобы восстановить позже
+    const char *old_tz = getenv("TZ");
+    char old_tz_buf[32] = {0};
+    if (old_tz) {
+        strncpy(old_tz_buf, old_tz, sizeof(old_tz_buf) - 1);
+    } else {
+        strcpy(old_tz_buf, "UTC0");
+    }
+
+    // Устанавливаем временную зону так, чтобы mktime() интерпретировал t_local
+    // как время с полученным смещением.
+    // Формат POSIX: "UTC-3" означает, что локальное время = UTC + 3 часа.
+    if (offset_minutes == 0) {
+        setenv("TZ", "UTC0", 1);
+    } else if (offset_minutes > 0) {
+        char buf[20];
+        snprintf(buf, sizeof(buf), "UTC-%d:%02d", offset_minutes / 60,
+                 offset_minutes % 60);
+        setenv("TZ", buf, 1);
+    } else { // offset_minutes < 0
+        int pos = -offset_minutes;
+        char buf[20];
+        snprintf(buf, sizeof(buf), "UTC+%d:%02d", pos / 60, pos % 60);
+        setenv("TZ", buf, 1);
+    }
+    tzset();
+
+    // Получаем абсолютное время (UTC) через mktime
+    time_t utc_timestamp = mktime(&t_local);
+
+    // Восстанавливаем прежнюю временную зону
+    setenv("TZ", old_tz_buf, 1);
+    tzset();
+
+    if (utc_timestamp == (time_t)-1) {
+        Serial.println("[SIM] getNetworkTime: mktime() failed");
+        return result;
+    }
+
+    // Разбираем UTC timestamp обратно в календарные поля
+    struct tm utc_tm;
+    if (gmtime_r(&utc_timestamp, &utc_tm) == nullptr) {
+        Serial.println("[SIM] getNetworkTime: gmtime_r() failed");
+        return result;
+    }
+
+    // Заполняем результат полями UTC, timezone = 0
+    result.year = utc_tm.tm_year + 1900;
+    result.month = utc_tm.tm_mon + 1;
+    result.day = utc_tm.tm_mday;
+    result.hour = utc_tm.tm_hour;
+    result.minute = utc_tm.tm_min;
+    result.second = utc_tm.tm_sec;
+    result.timezone = 0;
     result.valid = true;
     return result;
 }
 
+// Вспомогательная функция для безопасного преобразования UTC-полей в time_t
+static time_t makeUtcTime(int year, int month, int day, int hour, int minute,
+                          int second) {
+    // Сохраняем текущий TZ
+    const char *old_tz = getenv("TZ");
+    char old_tz_buf[32] = {0};
+    if (old_tz) {
+        strncpy(old_tz_buf, old_tz, sizeof(old_tz_buf) - 1);
+    } else {
+        strcpy(old_tz_buf, "UTC0");
+    }
+
+    setenv("TZ", "UTC0", 1);
+    tzset();
+
+    struct tm t = {0};
+    t.tm_year = year - 1900;
+    t.tm_mon = month - 1;
+    t.tm_mday = day;
+    t.tm_hour = hour;
+    t.tm_min = minute;
+    t.tm_sec = second;
+    t.tm_isdst = -1;
+    time_t ts = mktime(&t);
+
+    // Восстанавливаем
+    setenv("TZ", old_tz_buf, 1);
+    tzset();
+
+    return ts;
+}
+
 int syncSystemClock() {
-    // Защита от слишком частых вызовов
     static uint32_t lastAttempt = 0;
     uint32_t now = millis();
     if (now - lastAttempt < 3000) {
@@ -427,32 +512,29 @@ int syncSystemClock() {
         Serial.println("[SIM] GPRS not connected");
         return 0;
     }
+
     NetTime nt = getNetworkTime();
     if (!nt.valid || nt.year < 2020 || nt.year > 2050) {
         Serial.printf("[SIM] Invalid time: %04d-%02d-%02d\n", nt.year, nt.month,
                       nt.day);
         return 0;
     }
-    struct tm t = {0};
-    t.tm_year = nt.year - 1900;
-    t.tm_mon = nt.month - 1;
-    t.tm_mday = nt.day;
-    t.tm_hour = nt.hour;
-    t.tm_min = nt.minute;
-    t.tm_sec = nt.second;
-    t.tm_isdst = -1;
-    time_t ts = mktime(&t);
-    if (ts < 0) {
-        Serial.println("[SIM] mktime() failed");
+
+    time_t ts =
+        makeUtcTime(nt.year, nt.month, nt.day, nt.hour, nt.minute, nt.second);
+    if (ts == (time_t)-1) {
+        Serial.println("[SIM] makeUtcTime() failed");
         return 0;
     }
+
     struct timeval tv = {.tv_sec = ts, .tv_usec = 0};
     if (settimeofday(&tv, nullptr) != 0) {
         Serial.println("[SIM] settimeofday() failed");
         return 0;
     }
-    Serial.printf("[SIM] ✓ Synced: %04d-%02d-%02d %02d:%02d:%02d\n", nt.year,
-                  nt.month, nt.day, nt.hour, nt.minute, nt.second);
+
+    Serial.printf("[SIM] ✓ Synced UTC: %04d-%02d-%02d %02d:%02d:%02d\n",
+                  nt.year, nt.month, nt.day, nt.hour, nt.minute, nt.second);
     return 1;
 }
 
@@ -460,15 +542,8 @@ time_t getTimestamp() {
     NetTime nt = getNetworkTime();
     if (!nt.valid)
         return 0;
-    struct tm timeinfo = {0};
-    timeinfo.tm_year = nt.year - 1900;
-    timeinfo.tm_mon = nt.month - 1;
-    timeinfo.tm_mday = nt.day;
-    timeinfo.tm_hour = nt.hour;
-    timeinfo.tm_min = nt.minute;
-    timeinfo.tm_sec = nt.second;
-    timeinfo.tm_isdst = -1;
-    return mktime(&timeinfo);
+    return makeUtcTime(nt.year, nt.month, nt.day, nt.hour, nt.minute,
+                       nt.second);
 }
 
 // -----------------------------------------------------
@@ -531,7 +606,6 @@ bool deleteSMS(int index) {
     return (res == 1);
 }
 
-
 void stop() {
     if (client->connected()) {
         Serial.println("[HTTP] Closing previous connection");
@@ -568,7 +642,8 @@ static void clearModemBuffer() {
 // ========== Чтение HTTP-ответа до последнего байта ==========
 static bool readFullHttpResponse(int &outCode) {
     outCode = -1;
-    if (!client || !client->connected()) return false;
+    if (!client || !client->connected())
+        return false;
 
     unsigned long timeout = millis() + 20000;
     int contentLength = -1;
@@ -613,14 +688,16 @@ static bool readFullHttpResponse(int &outCode) {
             if (client->available()) {
                 int toRead = min((int)sizeof(buf), contentLength - totalRead);
                 int r = client->read(buf, toRead);
-                if (r > 0) totalRead += r;
+                if (r > 0)
+                    totalRead += r;
             } else {
                 delay(10);
                 yield();
             }
         }
         if (totalRead < contentLength) {
-            Serial.printf("[HTTP] Incomplete body: %d/%d\n", totalRead, contentLength);
+            Serial.printf("[HTTP] Incomplete body: %d/%d\n", totalRead,
+                          contentLength);
             return false;
         }
     }
@@ -664,7 +741,7 @@ bool httpBegin(const char *host) {
     }
     // Даём модему время выдать CONNECT
     delay(1500);
-    clearModemBuffer();  // убираем технические строки
+    clearModemBuffer(); // убираем технические строки
 
     _httpHost = host;
     _httpPort = port;
@@ -674,8 +751,7 @@ bool httpBegin(const char *host) {
 }
 
 // ========== 2. Отправка одного POST-пакета (без чтения ответа) ==========
-bool httpSendPacket(const uint8_t *payload, size_t length,
-                    const char *deviceId,
+bool httpSendPacket(const uint8_t *payload, size_t length, const char *deviceId,
                     const char *path) {
     if (!_httpConnected || !client->connected()) {
         Serial.println("[HTTP] Not connected, call httpBegin() first");
@@ -697,7 +773,8 @@ bool httpSendPacket(const uint8_t *payload, size_t length,
     // Отправляем заголовки
     size_t sent = client->print(request);
     if (sent != request.length()) {
-        Serial.printf("[HTTP] Header send error: sent %u of %u\n", sent, request.length());
+        Serial.printf("[HTTP] Header send error: sent %u of %u\n", sent,
+                      request.length());
         return false;
     }
     // Отправляем тело
@@ -722,27 +799,33 @@ bool httpSendPacket(const uint8_t *payload, size_t length,
     return true;
 }
 
-// ========== 3. Надёжная отправка с авто-переподключением и повторами ==========
+// ========== 3. Надёжная отправка с авто-переподключением и повторами
+// ==========
 bool httpSendPacketSafe(const uint8_t *payload, size_t length,
                         const char *deviceId, const char *path,
                         const char *host) {
     const int maxRetries = 2;
     for (int attempt = 0; attempt <= maxRetries; ++attempt) {
         // Проверяем здоровье сети и GPRS
-        if (!modem || !isActive) return false;
+        if (!modem || !isActive)
+            return false;
 
         if (!modem->isGprsConnected()) {
             Serial.println("[HTTP] GPRS lost, reconnecting...");
-
-            if (!connect(apn, gprsUser, gprsPass)) {
-                Serial.println("[HTTP] GPRS reconnect failed");
-                delay(2000);
-                continue;
-            }
+            return false;
+            // if (!connect(apn, gprsUser, gprsPass)) {
+            //     Serial.println("[HTTP] GPRS reconnect failed");
+            //     delay(2000);
+            //     continue;
+            // }
         }
 
         // // Если нет активного TCP – открываем
         if (!_httpConnected || !client || !client->connected()) {
+            if (!modem->isGprsConnected()) {
+                Serial.println("[HTTP] GPRS lost and havent gprs, return");
+                return false;
+            }
             httpEnd();
             if (!httpBegin(host)) {
                 Serial.println("[HTTP] TCP connect failed, retry...");
@@ -753,7 +836,7 @@ bool httpSendPacketSafe(const uint8_t *payload, size_t length,
 
         // Отправляем запрос
         if (!httpSendPacket(payload, length, deviceId, path)) {
-            httpEnd();  // разрыв, будем пробовать заново
+            httpEnd(); // разрыв, будем пробовать заново
             delay(500);
             continue;
         }
@@ -779,7 +862,6 @@ bool httpSendPacketSafe(const uint8_t *payload, size_t length,
     Serial.println("[HTTP] All attempts failed");
     return false;
 }
-
 // ========== 4. Корректное закрытие TCP ==========
 void httpEnd() {
     if (client) {
@@ -792,6 +874,5 @@ void httpEnd() {
     _httpPort = 0;
     Serial.println("[HTTP] Connection closed");
 }
-
 } // namespace SimModule
 #endif

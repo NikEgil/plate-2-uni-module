@@ -156,7 +156,7 @@ uint8_t readSwitchState() {
         return raw; // Возвращаем только при реальном изменении
     }
 
-    // return 0xFF; // Специальный код: "нет изменений" (можно игнорировать)
+    return raw; // Специальный код: "нет изменений" (можно игнорировать)
 }
 
 #if BOARD_REV == 3
@@ -213,7 +213,6 @@ uint8_t checkButton() {
     // 🔹 0: Таймер или другая причина (обычный рабочий цикл)
     return 0;
 }
-
 
 #endif
 void sleep(int time) {
@@ -524,9 +523,9 @@ void enable_sim(bool act) {
 }
 
 void activate_sim(bool act) {
-    if (act==true) {
+    if (act == true) {
         digitalWrite(ESIM, LOW);
-    Serial.println("SIM ON");
+        Serial.println("SIM ON");
 
         delay(1000);
         // enable_power(true);
@@ -756,7 +755,16 @@ bool setTimeFromHexBytes(const byte buf[6]) {
 
     return true;
 }
-
+int get_time_string(char *buffer, size_t buf_size) {
+    time_t now;
+    time(&now);
+    struct tm ti;
+    localtime_r(&now, &ti);
+    int year = (ti.tm_year + 1900) % 100;
+    return snprintf(buffer, buf_size, "%02d.%02d.%02d %02d:%02d:%02d", year,
+                    ti.tm_mon + 1, ti.tm_mday, ti.tm_hour, ti.tm_min,
+                    ti.tm_sec);
+}
 // подготовительная функция
 uint64_t getPackedTimeHex() {
     time_t now;
@@ -767,6 +775,51 @@ uint64_t getPackedTimeHex() {
     return ((uint64_t)yy << 40) | ((uint64_t)(ti.tm_mon + 1) << 32) |
            ((uint64_t)ti.tm_mday << 24) | ((uint64_t)ti.tm_hour << 16) |
            ((uint64_t)ti.tm_min << 8) | (uint64_t)ti.tm_sec;
+}
+void encode_to_buffer(const char *message, uint8_t *buffer) {
+    // Размер буфера фиксирован
+    const int buffer_size = 198;
+
+    // Длина сообщения
+    size_t msg_len = strlen(message);
+    // Максимальная длина сообщения: 198 - (1 длина + 3 FF + 3 ID + 6 время) = 185
+    const size_t max_msg_len = buffer_size - 13;
+    if (msg_len > max_msg_len) msg_len = max_msg_len;
+
+    // Общая длина пакета: 1 (длина) + 3 (FF) + 3 (ID) + 6 (время) + msg_len
+    int total_len = 1 + 3 + 3 + 6 + msg_len;
+    if (total_len > buffer_size) total_len = buffer_size; // защита
+
+    // Байт 0 – общая длина
+    buffer[0] = (uint8_t)total_len;
+
+    // Байты 1,2,3 – маркер 0xFF
+    buffer[1] = 0xFF;
+    buffer[2] = 0xFF;
+    buffer[3] = 0xFF;
+
+    // Байты 4,5,6 – ID (старший->младший)
+    buffer[4] = (uint8_t)((ID >> 16) & 0xFF);
+    buffer[5] = (uint8_t)((ID >> 8) & 0xFF);
+    buffer[6] = (uint8_t)(ID & 0xFF);
+
+    // Байты 7..12 – упакованное время
+    uint8_t time_bytes[6];
+    getPackedTimeBytes(time_bytes);
+    for (int i = 0; i < 6; i++) {
+        buffer[7 + i] = time_bytes[i];
+    }
+
+    // Байты 13..(13+msg_len-1) – сообщение
+    for (size_t i = 0; i < msg_len; i++) {
+        buffer[13 + i] = (uint8_t)message[i];
+    }
+
+    // Оставшиеся байты от конца данных до конца буфера – нули
+    int data_end = 13 + msg_len;
+    for (int i = data_end; i < buffer_size; i++) {
+        buffer[i] = 0;
+    }
 }
 
 // получение текущей даты в hex ГГ ММ ДД ЧЧ ММ СС
