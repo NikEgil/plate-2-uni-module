@@ -90,6 +90,9 @@ String Headers = "";
 String URL = "";
 uint16_t Port = 0;
 
+
+
+
 void loadConfigFromNVS() {
     Preferences prefs;
     prefs.begin("sim-config", true); // read-only
