@@ -126,7 +126,7 @@ constexpr int LORA_DEFAULT_ADDRESS = 01;
 #elif NET==2
 constexpr int SIMRX = 5;
 constexpr int SIMTX = 4;
-constexpr int SIM_BAUD = 2400;
+constexpr int SIM_BAUD = 1200;
 constexpr int MODEM_PWR_PIN = 40;
 extern const char *apn;      // Access Point Name
 extern const char *gprsUser; // GPRS username (if required)

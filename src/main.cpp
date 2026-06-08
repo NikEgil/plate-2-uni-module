@@ -86,35 +86,35 @@ byte tableSens[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
 byte ccid[10] = {};
 int signalp = 0;
 
-String Pass = "";
-String Broker = "";
+String Headers = "";
+String URL = "";
 uint16_t Port = 0;
 
 void loadConfigFromNVS() {
     Preferences prefs;
     prefs.begin("sim-config", true); // read-only
-    if (prefs.isKey("broker")) {
-        Pass = prefs.getString("pass", "");
-        Broker = prefs.getString("broker", "");
-        Port = prefs.getString("port", "1883").toInt();
+    if (prefs.isKey("url")) {
+        URL = prefs.getString("url", "");
+        Port = prefs.getString("port", "1883").toInt(); 
+        Headers = prefs.getString("headers", "");
         Serial.println("[NVS] Загружены настройки:");
-        Serial.printf("  Pass:   %s\n", Pass.c_str());
-        Serial.printf("  Broker: %s\n", Broker.c_str());
+        Serial.printf("  Headers:   %s\n", Headers.c_str());
+        Serial.printf("  URL: %s\n", URL.c_str());
         Serial.printf("  Port:   %d\n", Port);
     } else {
         Serial.println("[NVS] Нет сохранённых настроек");
-        Pass = "";
-        Broker = "";
+        Headers = "";
+        URL = "";
         Port = 1883;
     }
     prefs.end();
 }
 
-void saveConfigFromNVS(String spass, String sbroker, int sport) {
+void saveConfigFromNVS(String spass, String surl, int sport) {
     Preferences prefs;
     prefs.begin("sim-config", false);
-    prefs.putString("pass", spass);
-    prefs.putString("broker", sbroker);
+    prefs.putString("headers", spass);
+    prefs.putString("url", surl);
     prefs.putString("port", String(sport));
     prefs.end();
     loadConfigFromNVS();
@@ -550,7 +550,7 @@ bool processOneSMS(const String &text) {
     Serial.println("\n===== SMS =====");
     Serial.println(text);
 
-    // Разбираем строку: ожидаем "ID pass broker port"
+    // Разбираем строку: ожидаем "ID pass url port"
     String parts[4];
     int partIndex = 0;
     int startPos = 0;
@@ -572,7 +572,7 @@ bool processOneSMS(const String &text) {
 
     String id = parts[0];
     String spass = parts[1];
-    String sbroker = parts[2];
+    String surl = parts[2];
     uint16_t sport = parts[3].toInt();
 
     // Проверяем ID устройства (IDchar определён в defenitions.h)
@@ -581,7 +581,7 @@ bool processOneSMS(const String &text) {
                       IDchar);
         return false;
     } else {
-        saveConfigFromNVS(spass, sbroker, sport);
+        saveConfigFromNVS(spass, surl, sport);
         return true;
     }
 }
@@ -618,7 +618,6 @@ bool sim_activate(bool act) {
         return true;
     }
 
-    // --- Включение с несколькими раундами ---
     const int MAX_ROUNDS = 2;               // максимум 3 попытки
     const unsigned long ROUND_DELAY = 3000; // 5 секунд между раундами
     Serial.println("try conect0");
@@ -752,7 +751,7 @@ int adding() {
 
 // bool mqtt_send() {
 //     yield();
-//     if (SimModule::mqttConnect(Broker, Port, Pass)) {
+//     if (SimModule::mqttConnect(URL, Port, Headers)) {
 //         int l = stack.count();
 //         Serial.printf("packets to sending -  %i\n", l);
 //         for (int i = 0; i < l; i++) {
@@ -798,12 +797,13 @@ bool restart_http() {
     }
     return false;
 }
+
 bool http_send() {
     yield();
 
     int l = stack.count();
     Serial.printf("packets to sending -  %i\n", l);
-    Serial.println(restart_http());
+    // Serial.println(restart_http());
     for (int i = 0; i < l; i++) {
         yield();
         if (stack.read(g_packet)) {
@@ -812,15 +812,14 @@ bool http_send() {
             int len = adding();
             Serial.printf("   Prepared packet #%d, len %i\n", i, len);
             printHEX(a_packet, len);
-            if (SimModule::httpSendPacketSafe(a_packet, len, "device-001",
+            if (SimModule::httpSendPacketSafe(a_packet, len, "device-002",
                                               "/gateway/packets",
-                                              "158.160.78.215")) {
+                                              "test.rootsapp.ru")) {
                 Serial.printf("   ✅ packet #%d sended\n", i);
                 blink(1, 500);
             } else {
                 Serial.printf("   ❌ packet #%d NOT sended!!!\n", i);
                 stack.write(g_packet);
-                // Serial.println(restart_http());
             }
         } else {
             Serial.printf("❌ Failed to pop packet #%d (stack empty?)\n", i);
@@ -1265,7 +1264,7 @@ RTC_DATA_ATTR uint32_t lastSleepTime = 0;
 const uint32_t WORK_INTERVAL = 30UL * 60 * 1000; // 30 минут
 int iter = 0;
 
-RTC_DATA_ATTR int test2_phase = 0;     // 0=заполнение, 1=после краша
+RTC_DATA_ATTR int test2_phase = 0; // 0=заполнение, 1=после краша
 RTC_DATA_ATTR bool test2_crashed = false;
 // ----- Вспомогательная функция записи одного пакета -----
 void writeTestPacket(uint8_t marker, uint8_t value) {
@@ -1334,122 +1333,80 @@ void setup() {
         // }
         // lora_activate(0);
     }
-    if (test2_phase == 0) {
-        // Первый запуск: заполняем буфер 20 пакетами
-        stack.clear();
-        for (int i = 1; i <= 20; i++) {
-            writeTestPacket(0, i); // marker=0, value=1..20
-        }
-        Serial.println("Test2: 20 records written");
-        test2_phase = 1;
-        test2_crashed = false;
-        delay(100);
-        // Имитируем нормальную перезагрузку (можно просто уйти в сон и
-        // проснуться, но для чистоты эксперимента сделаем программный сброс)
-        sleep(10);
-    }
-
-    if (test2_phase == 1 && !test2_crashed) {
-        // Пробуждение до сбоя: читаем первые 7 пакетов
-        for (int i = 0; i < 7; i++) {
-            if (stack.read(g_packet)) {
-                Serial.printf("Test2 pre-crash read #%d: ", i);
-                printHEX(g_packet, g_packet[0] + 1);
-            } else {
-                Serial.println("Test2 ERROR: failed to read packet");
-            }
-        }
-        // Имитируем внезапное отключение питания
-        test2_crashed = true;
-        Serial.println("Test2: ***** POWER FAILURE *****");
-        delay(100);
-        sleep(10); // полный сброс контроллера
-    }
-
-    if (test2_phase == 1 && test2_crashed) {
-        // После сбоя: смотрим, что осталось в буфере
-        Serial.printf("Test2 after crash: stack.count() = %u\n", stack.count());
-        // Читаем все оставшиеся пакеты и выводим их
-        while (stack.count() > 0) {
-            if (stack.read(g_packet)) {
-                Serial.print("Test2 remaining: ");
-                printHEX(g_packet, g_packet[0] + 1);
-            }
-        }
-        test2_phase = 2; // тест завершён
-        Serial.println("Test2: verification done");
-    }
-
-    if (test2_phase == 2) {
-        // Бесконечный глубокий сон, чтобы не тратить батарею
-        Serial.println("Test2 finished, entering deep sleep forever...");
-        delay(100);
-        sleep(10);
-    }
+    // writeTestPacket(1, 1);
+    // Serial.printf("stack count %i",stack.count());
 
     // work();
-    uint32_t now = millis();
-    if (lastWorkTime == 0)
-        lastWorkTime = now;
-    if (lastSleepTime == 0)
-        lastSleepTime = now;
+    // uint32_t now = millis();
+    // if (lastWorkTime == 0)
+    //     lastWorkTime = now;
+    // if (lastSleepTime == 0)
+    //     lastSleepTime = now;
     // lora_activate(true);
 }
+int qqq = 0;
 
 void loop() {
-    // Приём LoRa пакетов
-    int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
-    if (len > 0) {
-        digitalWrite(LED_PIN, HIGH);
-        Serial.printf("\n\n📨 Packet %d bytes\n", len);
-        printHEX(rxBuffer, (int)rxBuffer[0] + 1);
-        byte senstime[] = {rxBuffer[5], rxBuffer[6], rxBuffer[7],
-                           rxBuffer[8], rxBuffer[9], rxBuffer[10]};
-        printTimeFromHexBytes(senstime);
-        bool crcOK = checkCRC(rxBuffer, (int)rxBuffer[0]);
-        if (crcOK && len > 15) {
-            Serial.println("✅Valid sensor data");
-            LORA_sendOK();
-            uint8_t *packet = g_packet;
-            memset(packet, 0, sizeof(g_packet));
-            memcpy(packet, rxBuffer, len);
-            if (stack.write(packet)) {
-                Serial.printf("pushed len %i, count %i\n", len, stack.count());
-            }
-        }
-        if (!crcOK && len < 15) {
-            Serial.println("📣Sensor signal check");
-            LORA_sendOK();
-        }
-        digitalWrite(LED_PIN, LOW);
+    for (int t = 0; t < 20; t++) {
+        writeTestPacket(qqq, t);
     }
-
-    uint32_t now = millis();
-    bool timeExpired = (now - lastWorkTime >= WORK_INTERVAL);
-    bool timeToSleep = (now - lastSleepTime >= WORK_INTERVAL * 2.1);
-
-    // Условие для запуска work(): есть пакеты и (истекло время или кнопка)
-    if (stack.count() > 0 && (timeExpired || digitalRead(BUT2) == LOW)) {
-        blink(2, 750);
-        Serial.printf("stack count %i timeExpired %i\n", stack.count(),
-                      timeExpired);
-        Serial.println("️        Running work()...");
-        work();                  // теперь work() не уходит в сон внутри
-        lastWorkTime = millis(); // обновляем метку после попытки
-        blink(2, 750);
-        Serial.println("️        END work()...");
-        lora_activate(true);
-    }
-
-    // Плановый уход в глубокий сон
-    // if (timeToSleep) {
-    //     lastSleepTime = now;
-    //     sleep(10); // 30 минут
-    // }
-
-    delay(10);
-    yield();
+    Serial.printf("stack count %i", stack.count());
+    work();
+    blink(1, 1000);
+    qqq += 1;
 }
+
+// void loop() {
+//     // Приём LoRa пакетов
+//     int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
+//     if (len > 0) {
+//         digitalWrite(LED_PIN, HIGH);
+//         Serial.printf("\n\n📨 Packet %d bytes\n", len);
+//         printHEX(rxBuffer, (int)rxBuffer[0] + 1);
+//         byte senstime[] = {rxBuffer[5], rxBuffer[6], rxBuffer[7],
+//                            rxBuffer[8], rxBuffer[9], rxBuffer[10]};
+//         printTimeFromHexBytes(senstime);
+//         bool crcOK = checkCRC(rxBuffer, (int)rxBuffer[0]);
+//         if (crcOK && len > 15) {
+//             Serial.println("✅Valid sensor data");
+//             LORA_sendOK();
+//             uint8_t *packet = g_packet;
+//             memset(packet, 0, sizeof(g_packet));
+//             memcpy(packet, rxBuffer, len);
+//             if (stack.write(packet)) {
+//                 Serial.printf("pushed len %i, count %i\n", len,
+//                 stack.count());
+//             }
+//         }
+//         if (!crcOK && len < 15) {
+//             Serial.println("📣Sensor signal check");
+//             LORA_sendOK();
+//         }
+//         digitalWrite(LED_PIN, LOW);
+//     }
+//     uint32_t now = millis();
+//     bool timeExpired = (now - lastWorkTime >= WORK_INTERVAL);
+//     bool timeToSleep = (now - lastSleepTime >= WORK_INTERVAL * 2.1);
+//     // Условие для запуска work(): есть пакеты и (истекло время или кнопка)
+//     if (stack.count() > 0 && (timeExpired || digitalRead(BUT2) == LOW)) {
+//         blink(2, 750);
+//         Serial.printf("stack count %i timeExpired %i\n", stack.count(),
+//                       timeExpired);
+//         Serial.println("️        Running work()...");
+//         work();                  // теперь work() не уходит в сон внутри
+//         lastWorkTime = millis(); // обновляем метку после попытки
+//         blink(2, 750);
+//         Serial.println("️        END work()...");
+//         lora_activate(true);
+//     }
+//     // Плановый уход в глубокий сон
+//     // if (timeToSleep) {
+//     //     lastSleepTime = now;
+//     //     sleep(10); // 30 минут
+//     // }
+//     delay(10);
+//     yield();
+// }
 #endif
 
 #if BOARD_REV == 1 and BOARD_TYPE == 1
