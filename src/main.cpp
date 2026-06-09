@@ -757,7 +757,7 @@ bool http_send() {
         if (!stack.read(g_packet)) {
             Serial.printf("❌ Failed to pop packet #%d (stack empty?)\n", i);
             saveMSG("ERROR fail pop packet");
-            break; // не возвращаем false, чтобы вызвать httpEnd()
+            return false; // не возвращаем false, чтобы вызвать httpEnd()
         }
         Serial.printf("    Popped packet #%d\n", i);
         printHEX(g_packet, g_packet[0]); // без +1
@@ -803,7 +803,7 @@ void lora_activate(bool act) {
 
 void LORA_sendOK() {
     byte date[] = {0x00, 0x01, 0x01, 0x00, 0x00, 0x00};
-    if (isTime) {
+    if (isTime()) {
         getPackedTimeBytes(date);
     }
     printCurrentTime();
@@ -1215,7 +1215,7 @@ void loop() {}
 // Таймеры на millis (не RTC, после сна сбросятся – это нормально)
 uint32_t lastWorkTime = 0;
 uint32_t lastSleepTime = 0;
-uint32_t now =0;
+uint32_t now = 0;
 const uint32_t WORK_INTERVAL_MS = 1UL * 60 * 1000;  // 30 минут
 const uint32_t SLEEP_INTERVAL_MS = 2UL * 60 * 1000; // 135 минут
 // ----- Вспомогательная функция записи одного пакета -----
@@ -1258,7 +1258,9 @@ void setup() {
     int wakebut = checkButton();
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
-        // cleanUpStack();
+        cleanUpStack();
+
+        sleep(10);
         // SIM_check_signal();
         lora_activate(true);
         int ch = readSwitchState() + 1;
@@ -1282,6 +1284,37 @@ void setup() {
     Serial.println("        work start");
     lora_activate(true);
 }
+// stack test
+// void loop() {
+//     for (int i = 0; i < 7000; i++) {
+//         snprintf(message, sizeof(message), "aa stack count %d, steop %d",
+//                  stack.count(), i);
+//         saveMSG(message);
+//         delay(1);
+//     }
+//     int l = stack.count();
+//     Serial.printf("stacke count %i", l);
+//     delay(2000);
+//     byte buf0[198] = {};
+//     byte buf1[198] = {};
+//     for (int i = 0; i < l; i++) {
+//         if (stack.read(g_packet)) {
+//             if (i == 0) {
+//                 memcpy(buf0, g_packet, 198);
+//             }
+//             if (i == l - 1) {
+//                 memcpy(buf1, g_packet, 198);
+//             }
+//         }
+//         delay(1);
+//     }
+//     Serial.println("first");
+//     printHEX(buf0, 198);
+//     printHEX(buf1, 198);
+//     delay(99999999);
+// }
+
+//          НОВЫЙ
 void loop() {
     // ========== 1. Приём LoRa-пакетов (всегда, без блокировок) ==========
     int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
@@ -1295,12 +1328,13 @@ void loop() {
         bool crcOK = checkCRC(rxBuffer, (int)rxBuffer[0]);
         if (crcOK && len > 15) {
             Serial.println("✅Valid sensor data");
-            LORA_sendOK();
             uint8_t *packet = g_packet;
             memset(packet, 0, sizeof(g_packet));
             memcpy(packet, rxBuffer, len);
             if (stack.write(packet)) {
-                Serial.printf("pushed len %i, count %i\n", len, stack.count());
+                LORA_sendOK();
+                Serial.printf("pushed len %i, count %i\n", len,
+                stack.count());
             }
         }
         if (!crcOK && len < 15) {
@@ -1324,25 +1358,21 @@ void loop() {
         blink(2, 750);
         lora_activate(true);
     }
-
-    // ========== 3. Периодический глубокий сон на 10 секунд (раз в 135 минут)
     bool sleepExpired =
         (lastSleepTime == 0) || (now - lastSleepTime >= SLEEP_INTERVAL_MS);
     if (sleepExpired) {
         lastSleepTime = millis();
-        Serial.println("Entering deep sleep for 10 seconds (reset modules)...");
-        Serial.flush();
+        Serial.println("Entering deep sleep for 10 seconds (resetmodules)..."); 
+        Serial.flush(); 
         lora_activate(false);
         sim_activate(false);
-        // Глубокий сон на 10 секунд. После пробуждения всё начнётся с setup().
-        esp_deep_sleep(10);
-        // Код ниже не выполнится
+        sleep(10);
     }
-
     delay(10);
     yield();
 }
 
+//          СТАРЫЙ
 // void loop() {
 //     // Приём LoRa пакетов
 //     int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));

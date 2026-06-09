@@ -24,7 +24,6 @@ bool configSet(uint8_t channel, uint8_t address); // Установка ново
 bool send(const uint8_t *data, size_t len);
 // int receive(uint8_t* buffer, size_t maxSize, uint32_t timeout = 1000);
 bool messageGetOK(uint32_t timeoutMs);
-void messageGetOKrssi(int rssi, uint32_t timeoutMs);
 // 🔹 Доступ к объекту (если нужно расширить функционал)
 LoRa_E220 *getClient();
 

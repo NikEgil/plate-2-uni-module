@@ -1,8 +1,6 @@
 #define TINY_GSM_MODEM_SIM800
 #define TINY_GSM_DEBUG Serial
-#define MQTT_SOCKET_TIMEOUT 30
 #include "sim.h"
-// #include <HttpClient.h>
 #include <SoftwareSerial.h>
 #include <TinyGsmClient.h>
 #include <defenitions.h>
@@ -778,8 +776,12 @@ bool httpSendPacket(const uint8_t *payload, size_t length, const char *deviceId,
         return false;
     }
     // Отправляем тело
-    client->write(payload, length);
-
+    // client->write(payload, length);
+    size_t bodySent = client->write(payload, length);
+    if (bodySent != length) {
+        Serial.println("оправлен не весь пакет");
+        return false;
+    }
     // Даём немного времени на отправку, проверяя URC
     unsigned long timeout = millis() + 20000;
     while (!client->available() && millis() < timeout) {
