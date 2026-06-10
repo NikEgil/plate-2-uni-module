@@ -10,28 +10,8 @@ int isPortEnable = 0;
 bool isSimEnable = false;
 bool isLoraEnable = false;
 } // namespace
-#if BOARD_REV == 2
-void initPins() {
-    pinMode(LED_PIN, OUTPUT);
-    pinMode(EG1, OUTPUT);
-    pinMode(EG2, OUTPUT);
-    pinMode(EG3, OUTPUT);
-    pinMode(EG4, OUTPUT);
-    pinMode(E12V, OUTPUT);
-    pinMode(E5V, OUTPUT);
 
-    pinMode(ADC, INPUT);
-    analogReadResolution(13);
-    analogSetAttenuation(ADC_6db);
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
-                             &adc_chars);
-    pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-    uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
-
-    // Настраиваем пробуждение по любому из этих пинов (LOW)
-}
-#elif BOARD_REV == 3 and BOARD_TYPE == 0
+#if BOARD_REV == 3 and BOARD_TYPE == 0
 void initPins() {
     pinMode(LED_PIN, OUTPUT);
     pinMode(EG1, OUTPUT);
@@ -103,15 +83,15 @@ void initPins() {
     // Настраиваем пробуждение по любому из этих пинов (LOW)
     esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
 }
-#elif BOARD_REV == 1 and BOARD_TYPE == 1
+#elif BOARD_REV == 1 and BOARD_TYPE == 0
 void initPins() {
     pinMode(LED_PIN, OUTPUT);
-    pinMode(ESIM, OUTPUT);
-    // pinMode(EP, OUTPUT);
+    pinMode(EP, OUTPUT);
 
-    pinMode(ELORA, OUTPUT);
-    // pinMode(SIM_PWR, OUTPUT);
-    // настройка для измерения батареи
+    pinMode(EG1, OUTPUT);
+    pinMode(EG2, OUTPUT);
+    pinMode(EG3, OUTPUT);
+    pinMode(EG4, OUTPUT);
     pinMode(ADC, INPUT);
     analogReadResolution(13);
     analogSetAttenuation(ADC_6db);
@@ -135,6 +115,7 @@ byte rssip(byte rssi) {
     Serial.printf("rssi get %f,perc %i\n", rssi1, perc);
     return (byte)perc;
 }
+#if NET != 1
 uint8_t readSwitchState() {
     static uint8_t lastRaw = 0;
     static unsigned long lastChange = 0;
@@ -158,6 +139,7 @@ uint8_t readSwitchState() {
 
     return raw; // Специальный код: "нет изменений" (можно игнорировать)
 }
+#endif
 
 #if BOARD_REV == 3
 uint8_t checkButton() {
@@ -343,6 +325,25 @@ void enable_power(bool act) {
 #endif
 
 #if BOARD_TYPE == 0
+
+void enable_power(bool act) {
+    // Если состояние уже соответствует запросу — ничего не делаем
+    if (act == isPowered) {
+        return;
+    }
+    if (act) {
+        digitalWrite(EP, HIGH);
+        delay(1000);
+        Serial.println("POWER ON");
+        isPowered = true;
+    } else {
+        digitalWrite(EP, LOW);
+        delay(400);
+        Serial.println("POWER OFF");
+        isPowered = false;
+    }
+}
+
 void enable_sens(int port) {
     if (port == isPortEnable) {
         Serial.printf("Duble enable %i\n", port);
@@ -386,25 +387,7 @@ void enable_sens(int port) {
 
 #endif
 
-#if NET == 0 and BOARD_REV == 2
-void enable_lora(bool act) {
-    if (act == isLoraEnable) {
-        return;
-    }
-    if (act) {
-        digitalWrite(ELORA, HIGH);
-        delay(200);
-        Serial.println("LORA ON");
-        isLoraEnable = true;
-    } else {
-        digitalWrite(ELORA, LOW);
-        delay(200);
-        Serial.println("LORA OFF");
-        isLoraEnable = false;
-    }
-}
-
-#elif NET == 0 and BOARD_REV == 3
+#if NET == 0 and BOARD_REV == 3
 void enable_lora(bool act) {
     if (act == isLoraEnable) {
         return;
@@ -488,56 +471,19 @@ void activate_sim(bool act) {
         digitalWrite(EP, HIGH);
     }
 }
-#elif NET == 2 and BOARD_REV == 1
+#elif NET == 0 and BOARD_REV == 1
 void enable_lora(bool act) {
-    // if (act == isLoraEnable) {
-    //     return;
-    // }
-    // if (act) {
-    //     digitalWrite(ELORA, HIGH);
-    //     delay(200);
-    Serial.println("LORA ON");
-    //     isLoraEnable = true;
-    // } else {
-    //     digitalWrite(ELORA, LOW);
-    //     delay(200);
-    //     Serial.println("LORA OFF");
-    //     isLoraEnable = false;
-    // }
-}
-void enable_sim(bool act) {
-    // if (act == isSimEnable) {
-    //     return;
-    // }
-    // if (act) {
-    //     digitalWrite(ESIM, HIGH);
-    //     delay(1000);
-    Serial.println("SIM ON");
-    //     isSimEnable = true;
-    // } else {
-    //     digitalWrite(ESIM, LOW);
-    //     delay(1000);
-    //     Serial.println("SIM OFF");
-    //     isSimEnable = false;
-    // }
-}
 
-void activate_sim(bool act) {
-    if (act == true) {
-        digitalWrite(ESIM, LOW);
-        Serial.println("SIM ON");
+    if (act) {
 
-        delay(1000);
-        // enable_power(true);
-        digitalWrite(ESIM, HIGH);
+        Serial.println("LORA ON");
+        isLoraEnable = true;
     } else {
-        digitalWrite(ESIM, LOW);
-        Serial.println("SIM OFF");
-        delay(3000);
-        // enable_power(false);
-        digitalWrite(ESIM, HIGH);
+        Serial.println("LORA OFF");
+        isLoraEnable = false;
     }
 }
+
 #endif
 
 void addCRC(byte req[], int dataLength, byte response[]) {
@@ -643,7 +589,6 @@ void printCurrentTime() {
                   ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday, ti->tm_hour,
                   ti->tm_min, ti->tm_sec);
 }
-
 // возват true если время правдоподобное
 bool isTime() {
     time_t now;
@@ -782,26 +727,27 @@ void encode_to_buffer(const char *message, uint8_t *buffer) {
 
     // Длина сообщения
     size_t msg_len = strlen(message);
-    // Максимальная длина сообщения: 198 - (1 длина + 3 FF + 3 ID + 6 время) = 185
+    // Максимальная длина сообщения: 198 - (1 длина + 3 FF + 3 ID + 6 время) =
+    // 185
     const size_t max_msg_len = buffer_size - 13;
-    if (msg_len > max_msg_len) msg_len = max_msg_len;
+    if (msg_len > max_msg_len)
+        msg_len = max_msg_len;
 
     // Общая длина пакета: 1 (длина) + 3 (FF) + 3 (ID) + 6 (время) + msg_len
     int total_len = 1 + 3 + 3 + 6 + msg_len;
-    if (total_len > buffer_size) total_len = buffer_size; // защита
+    if (total_len > buffer_size)
+        total_len = buffer_size; // защита
 
     // Байт 0 – общая длина
     buffer[0] = (uint8_t)total_len;
 
-    // Байты 1,2,3 – маркер 0xFF
-    buffer[1] = 0xFF;
-    buffer[2] = 0xFF;
-    buffer[3] = 0xFF;
+    buffer[1] = (uint8_t)((ID >> 16) & 0xFF);
+    buffer[2] = (uint8_t)((ID >> 8) & 0xFF);
+    buffer[3] = (uint8_t)(ID & 0xFF);
 
-    // Байты 4,5,6 – ID (старший->младший)
-    buffer[4] = (uint8_t)((ID >> 16) & 0xFF);
-    buffer[5] = (uint8_t)((ID >> 8) & 0xFF);
-    buffer[6] = (uint8_t)(ID & 0xFF);
+    buffer[4] = 0xFF;
+    buffer[5] = 0xFF;
+    buffer[6] = 0xFF;
 
     // Байты 7..12 – упакованное время
     uint8_t time_bytes[6];

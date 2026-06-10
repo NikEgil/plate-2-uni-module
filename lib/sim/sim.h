@@ -54,28 +54,25 @@ bool http_post(const uint8_t *payload, size_t length, const String &url,
 bool sendHttpPost(const uint8_t *payload, size_t length);
 void stop();
 
-
-
-
 // ========== Вспомогательная функция: очистка мусора из UART ==========
-static void clearModemBuffer() ;
+static void clearModemBuffer();
 
 // ========== Чтение HTTP-ответа до последнего байта ==========
-static bool readFullHttpResponse(int &outCode) ;
+static bool readFullHttpResponse(int &outCode);
 
 // ========== 1. Установка TCP-соединения (улучшенная) ==========
-bool httpBegin(const char *host) ;
+bool httpBegin(const char *host, int port);
 
 // ========== 2. Отправка одного POST-пакета (без чтения ответа) ==========
-bool httpSendPacket(const uint8_t *payload, size_t length,
-                    const char *deviceId,
-                    const char *path ) ;
-// ========== 3. Надёжная отправка с авто-переподключением и повторами ==========
+bool httpSendPacket(const uint8_t *payload, size_t length, const char *deviceId,
+                    const char *path);
+// ========== 3. Надёжная отправка с авто-переподключением и повторами
+// ==========
 bool httpSendPacketSafe(const uint8_t *payload, size_t length,
                         const char *deviceId, const char *path,
-                        const char *host) ;
+                        const char *host, int port);
 // ========== 4. Корректное закрытие TCP ==========
-void httpEnd() ;
+void httpEnd();
 // -----------------------------------------------------
 // Чтение SMS (по умолчанию только новые "REC UNREAD")
 // -----------------------------------------------------

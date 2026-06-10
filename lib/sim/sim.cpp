@@ -708,8 +708,7 @@ static bool readFullHttpResponse(int &outCode) {
 }
 
 // ========== 1. Установка TCP-соединения (улучшенная) ==========
-bool httpBegin(const char *host) {
-    int port = 80;
+bool httpBegin(const char *host, int port) {
     if (_httpConnected && client && client->connected()) {
         // Проверяем живость соединения дополнительно (AT+CIPSTATUS)
         modem->sendAT("AT+CIPSTATUS");
@@ -805,7 +804,7 @@ bool httpSendPacket(const uint8_t *payload, size_t length, const char *deviceId,
 // ==========
 bool httpSendPacketSafe(const uint8_t *payload, size_t length,
                         const char *deviceId, const char *path,
-                        const char *host) {
+                        const char *host, int port) {
     const int maxRetries = 2;
     for (int attempt = 0; attempt <= maxRetries; ++attempt) {
         // Проверяем здоровье сети и GPRS
@@ -829,7 +828,7 @@ bool httpSendPacketSafe(const uint8_t *payload, size_t length,
                 return false;
             }
             httpEnd();
-            if (!httpBegin(host)) {
+            if (!httpBegin(host, port)) {
                 Serial.println("[HTTP] TCP connect failed, retry...");
                 delay(3000);
                 continue;

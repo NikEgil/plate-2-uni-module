@@ -89,18 +89,29 @@ constexpr int BUT1 = 8;
 constexpr int BUT2 = 9;
 constexpr int SW1_PIN = 35;
 constexpr int SW2_PIN = 36;
-#elif BOARD_REV == 1 and BOARD_TYPE == 1
-constexpr int ELORA = 33;
-constexpr int ESIM = 1;
-constexpr int REDE = 11;
-constexpr int ADC = 10;
+#elif BOARD_REV == 1 and BOARD_TYPE == 0
+constexpr int EG1 = 1;
+constexpr int EG2 = 2;
+constexpr int EG3 = 3;
+constexpr int EG4 = 4;
+constexpr int EP = 7;
+// constexpr int ELORA = 33;
+// constexpr int ESIM = 38;
+constexpr int RS1RX = 39;
+constexpr int RS1TX = 40;
+constexpr int RS2RX = 37;
+constexpr int RS2TX = 38;
+// constexpr int REDE = 44;
+constexpr int ADC = 5;
+// constexpr int BUT1 = 8;
+// constexpr int BUT2 = 9;
 constexpr int SW1_PIN = 35;
 constexpr int SW2_PIN = 36;
 #else
 #error "Unknown BOARD_REV"
 #endif
 
-#if NET == 1
+#if NET == 1 and BOARD_REV==3
 
 constexpr int SIMRX = 17;
 constexpr int SIMTX = 16;
@@ -114,16 +125,16 @@ extern const char *broker;
 extern const char *IDchar;
 extern const char *pass;
 
-#elif NET == 0
+#elif NET == 0 and BOARD_REV==3
 constexpr int LORA_UART_RX = 16;
 constexpr int LORA_UART_TX = 17;
 constexpr int LORA_AUX_PIN = 34; // E220 AUX
 constexpr int LORA_M0_PIN = 18;  // E220 M0
 constexpr int LORA_M1_PIN = 21;  // E220 M1
-constexpr int LORA_BAUD = 9800;
+constexpr int LORA_BAUD = 9600;
 constexpr int LORA_DEFAULT_CHANNEL = 17;
 constexpr int LORA_DEFAULT_ADDRESS = 01;
-#elif NET==2
+#elif NET==2 and BOARD_REV==3
 constexpr int SIMRX = 5;
 constexpr int SIMTX = 4;
 constexpr int SIM_BAUD = 1200;
@@ -146,4 +157,13 @@ constexpr int LORA_BAUD = 9600;
 constexpr int LORA_DEFAULT_CHANNEL = 17;
 constexpr int LORA_DEFAULT_ADDRESS = 01;
 
+#elif NET == 0 and BOARD_REV==1
+constexpr int LORA_UART_RX = 16;
+constexpr int LORA_UART_TX = 17;
+constexpr int LORA_AUX_PIN = 8; // E220 AUX
+constexpr int LORA_M0_PIN = 18;  // E220 M0
+constexpr int LORA_M1_PIN = 21;  // E220 M1
+constexpr int LORA_BAUD = 9600;
+constexpr int LORA_DEFAULT_CHANNEL = 17;
+constexpr int LORA_DEFAULT_ADDRESS = 01;
 #endif
