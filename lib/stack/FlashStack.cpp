@@ -8,16 +8,16 @@
 // ------------------------------------------------------------------
 // Конфигурация
 // ------------------------------------------------------------------
-#define SECTOR_SIZE       4096
-#define REC_PER_SECTOR    (SECTOR_SIZE / sizeof(record_t))   // 19
-#define TOTAL_SECTORS     736
-#define MAX_RECORDS       6000
+#define SECTOR_SIZE 4096
+#define REC_PER_SECTOR (SECTOR_SIZE / sizeof(record_t)) // 19
+#define TOTAL_SECTORS 736
+#define MAX_RECORDS 6000
 
 #pragma pack(push, 1)
 typedef struct {
     uint32_t seq;
     uint16_t length;
-    uint8_t  data[FlashStack::DATA_LENGTH];
+    uint8_t data[FlashStack::DATA_LENGTH];
     uint16_t crc;
 } record_t;
 #pragma pack(pop)
@@ -35,6 +35,7 @@ typedef struct {
     uint16_t busy_head, busy_tail, busy_count;
     uint32_t flash_total;
     uint32_t magic;
+    uint32_t crc32; // CRC всего состояния для защиты RTC_NOINIT_ATTR
 } flash_state_t;
 
 static volatile RTC_NOINIT_ATTR flash_state_t fstate;
@@ -43,34 +44,69 @@ static const esp_partition_t *flash_partition = nullptr;
 // ------------------------------------------------------------------
 // Вспомогательные функции
 // ------------------------------------------------------------------
+
+// CRC16-CCITT для записей
 static uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
         crc ^= (uint16_t)data[i] << 8;
         for (int j = 0; j < 8; j++) {
-            if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
-            else              crc <<= 1;
+            if (crc & 0x8000)
+                crc = (crc << 1) ^ 0x1021;
+            else
+                crc <<= 1;
         }
     }
     return crc;
 }
 
 static void fill_record_crc(record_t *rec) {
-    // CRC вычисляется по seq, length и data (все поля до crc)
     rec->crc = crc16_ccitt((const uint8_t *)rec, offsetof(record_t, crc));
 }
 
 static bool check_record_crc(const record_t *rec) {
-    uint16_t computed = crc16_ccitt((const uint8_t *)rec, offsetof(record_t, crc));
+    uint16_t computed =
+        crc16_ccitt((const uint8_t *)rec, offsetof(record_t, crc));
     return computed == rec->crc;
 }
 
+// ------------------------------------------------------------------
+// CRC32 для защиты RTC_NOINIT_ATTR от мусора после сбоя питания
+// ------------------------------------------------------------------
+static uint32_t calcCRC32(const void *data, size_t len) {
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= p[i];
+        for (int j = 0; j < 8; j++)
+            crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+    }
+    return ~crc;
+}
+
+// Пересчитывает CRC и записывает в fstate.crc32
+static void update_state_crc() {
+    // CRC по всей структуре ДО поля crc32
+    size_t len = offsetof(flash_state_t, crc32);
+    fstate.crc32 = calcCRC32((const void *)&fstate, len);
+}
+
+// Проверяет, совпадает ли сохранённый CRC
+static bool verify_state_crc() {
+    size_t len = offsetof(flash_state_t, crc32);
+    uint32_t expected = calcCRC32((const void *)&fstate, len);
+    return fstate.crc32 == expected;
+}
+
+// ------------------------------------------------------------------
+// Инициализация чистого состояния
+// ------------------------------------------------------------------
 static void init_flash_state() {
-    memset((void*)&fstate, 0, sizeof(fstate));
+    memset((void *)&fstate, 0, sizeof(fstate));
     fstate.head_sector = 0xFFFF;
     fstate.tail_sector = 0xFFFF;
     fstate.seq_next = 0;
-    
+
     // Инициализация кольцевой очереди свободных секторов
     fstate.free_head = 0;
     fstate.free_tail = 0;
@@ -78,13 +114,13 @@ static void init_flash_state() {
     for (int i = 0; i < TOTAL_SECTORS; i++) {
         fstate.free_list[i] = i;
     }
-    
     fstate.busy_head = 0;
     fstate.busy_tail = 0;
     fstate.busy_count = 0;
-    
+
     fstate.flash_total = 0;
     fstate.magic = 0xBEEFFEED;
+    update_state_crc(); // crc: защита RTC_NOINIT_ATTR
 }
 
 // ------------------------------------------------------------------
@@ -137,32 +173,34 @@ static bool recover_state() {
 
     // Сортировка вставками по seq
     for (size_t i = 1; i < entry_count; i++) {
-        auto tmp = entries[i];
-        int j = i - 1;
-        while (j >= 0 && entries[j].seq > tmp.seq) {
+        auto key = entries[i];
+        int j = (int)i - 1;
+        while (j >= 0 && entries[j].seq > key.seq) {
             entries[j + 1] = entries[j];
             j--;
         }
-        entries[j + 1] = tmp;
+        entries[j + 1] = key;
     }
 
-    memset((void*)&fstate, 0, sizeof(fstate));
-    
-    // Собираем свободные сектора
-    bool used[TOTAL_SECTORS] = {false};
-    for (size_t k = 0; k < entry_count; k++) {
-        used[entries[k].sector] = true;
-    }
+    // Построение free_list
     fstate.free_count = 0;
     for (int i = 0; i < TOTAL_SECTORS; i++) {
-        if (!used[i]) {
+        bool used = false;
+        for (size_t j = 0; j < entry_count; j++) {
+            if (entries[j].sector == (uint16_t)i) {
+                used = true;
+                break;
+            }
+        }
+        if (!used) {
             fstate.free_list[fstate.free_count++] = i;
         }
     }
     fstate.free_head = 0;
-    fstate.free_tail = (fstate.free_count == TOTAL_SECTORS) ? 0 : fstate.free_count;
+    fstate.free_tail =
+        (fstate.free_count == TOTAL_SECTORS) ? 0 : fstate.free_count;
 
-    // Заполняем busy_list
+    // Построение busy_list
     uint16_t last_sec = 0xFFFF;
     fstate.busy_count = 0;
     for (size_t i = 0; i < entry_count; i++) {
@@ -173,7 +211,8 @@ static bool recover_state() {
         fstate.rec_count[entries[i].sector]++;
     }
     fstate.busy_head = 0;
-    fstate.busy_tail = (fstate.busy_count == TOTAL_SECTORS) ? 0 : fstate.busy_count;
+    fstate.busy_tail =
+        (fstate.busy_count == TOTAL_SECTORS) ? 0 : fstate.busy_count;
 
     // Голова и хвост очереди
     fstate.head_sector = entries[0].sector;
@@ -188,6 +227,7 @@ static bool recover_state() {
     fstate.flash_total = entry_count;
     fstate.seq_next = entries[entry_count - 1].seq + 1;
     fstate.magic = 0xBEEFFEED;
+    update_state_crc(); // crc: защита RTC_NOINIT_ATTR
 
     Serial.printf("Recovered %u records\n", fstate.flash_total);
     return true;
@@ -206,7 +246,7 @@ bool FlashStack::begin() {
         return false;
     }
 
-    if (fstate.magic != 0xBEEFFEED ||
+    if (fstate.magic != 0xBEEFFEED || !verify_state_crc() ||
         fstate.flash_total > MAX_RECORDS ||
         fstate.free_count + fstate.busy_count != TOTAL_SECTORS) {
         Serial.println("Invalid state – attempting recovery");
@@ -219,7 +259,8 @@ bool FlashStack::begin() {
 }
 
 bool FlashStack::write(const uint8_t *data) {
-    if (!flash_partition) return false;
+    if (!flash_partition)
+        return false;
 
     size_t total = fstate.flash_total;
     if (total >= MAX_RECORDS) {
@@ -232,10 +273,8 @@ bool FlashStack::write(const uint8_t *data) {
 
         fstate.head_offset += sizeof(record_t);
         if (fstate.rec_count[fstate.head_sector] == 0) {
-            // Стираем сектор и перемещаем в свободные
-            esp_partition_erase_range(flash_partition,
-                                      fstate.head_sector * SECTOR_SIZE,
-                                      SECTOR_SIZE);
+            esp_partition_erase_range(
+                flash_partition, fstate.head_sector * SECTOR_SIZE, SECTOR_SIZE);
             fstate.free_list[fstate.free_tail] = fstate.head_sector;
             fstate.free_tail = (fstate.free_tail + 1) % TOTAL_SECTORS;
             fstate.free_count++;
@@ -261,16 +300,21 @@ bool FlashStack::write(const uint8_t *data) {
     memcpy(rec.data, data, DATA_LENGTH);
     fill_record_crc(&rec);
 
-    if (fstate.tail_sector == 0xFFFF ||
-        (fstate.tail_offset + sizeof(record_t) > SECTOR_SIZE)) {
-        if (fstate.free_count == 0) return false;
+    if (fstate.tail_sector == 0xFFFF) {
+        // Очередь пуста — берём сектор из free
+        if (fstate.free_count == 0) {
+            Serial.println("No free sectors!");
+            return false;
+        }
         uint16_t new_sec = fstate.free_list[fstate.free_head];
         fstate.free_head = (fstate.free_head + 1) % TOTAL_SECTORS;
         fstate.free_count--;
 
+        esp_partition_erase_range(flash_partition, new_sec * SECTOR_SIZE,
+                                  SECTOR_SIZE);
+
         fstate.tail_sector = new_sec;
         fstate.tail_offset = 0;
-
         fstate.busy_list[fstate.busy_tail] = new_sec;
         fstate.busy_tail = (fstate.busy_tail + 1) % TOTAL_SECTORS;
         fstate.busy_count++;
@@ -278,7 +322,8 @@ bool FlashStack::write(const uint8_t *data) {
         if (fstate.flash_total == 0) {
             fstate.head_sector = new_sec;
             fstate.head_offset = 0;
-            fstate.busy_head = (fstate.busy_tail == 0) ? TOTAL_SECTORS - 1 : fstate.busy_tail - 1;
+            fstate.busy_head = (fstate.busy_tail == 0) ? TOTAL_SECTORS - 1
+                                                       : fstate.busy_tail - 1;
         }
     }
 
@@ -288,27 +333,29 @@ bool FlashStack::write(const uint8_t *data) {
     fstate.rec_count[fstate.tail_sector]++;
     fstate.flash_total++;
     fstate.tail_offset += sizeof(record_t);
+    update_state_crc(); // crc: защита RTC_NOINIT_ATTR
     return true;
 }
 
 bool FlashStack::read(uint8_t *buffer) {
-    if (!flash_partition) return false;
-    if (fstate.flash_total == 0 || fstate.head_sector == 0xFFFF) return false;
+    if (!flash_partition)
+        return false;
+    if (fstate.flash_total == 0 || fstate.head_sector == 0xFFFF)
+        return false;
 
     uint32_t addr = fstate.head_sector * SECTOR_SIZE + fstate.head_offset;
     record_t rec;
     esp_partition_read(flash_partition, addr, &rec, sizeof(rec));
 
     if (!check_record_crc(&rec)) {
-        // Повреждённая запись – удаляем
+        // Повреждённая запись — удаляем
         fstate.rec_count[fstate.head_sector]--;
         fstate.flash_total--;
 
         fstate.head_offset += sizeof(record_t);
         if (fstate.rec_count[fstate.head_sector] == 0) {
-            esp_partition_erase_range(flash_partition,
-                                      fstate.head_sector * SECTOR_SIZE,
-                                      SECTOR_SIZE);
+            esp_partition_erase_range(
+                flash_partition, fstate.head_sector * SECTOR_SIZE, SECTOR_SIZE);
             fstate.free_list[fstate.free_tail] = fstate.head_sector;
             fstate.free_tail = (fstate.free_tail + 1) % TOTAL_SECTORS;
             fstate.free_count++;
@@ -326,6 +373,7 @@ bool FlashStack::read(uint8_t *buffer) {
                 fstate.tail_offset = 0;
             }
         }
+        update_state_crc(); // crc: защита RTC_NOINIT_ATTR
         return false;
     }
 
@@ -336,9 +384,8 @@ bool FlashStack::read(uint8_t *buffer) {
 
     fstate.head_offset += sizeof(record_t);
     if (fstate.rec_count[fstate.head_sector] == 0) {
-        esp_partition_erase_range(flash_partition,
-                                  fstate.head_sector * SECTOR_SIZE,
-                                  SECTOR_SIZE);
+        esp_partition_erase_range(
+            flash_partition, fstate.head_sector * SECTOR_SIZE, SECTOR_SIZE);
         fstate.free_list[fstate.free_tail] = fstate.head_sector;
         fstate.free_tail = (fstate.free_tail + 1) % TOTAL_SECTORS;
         fstate.free_count++;
@@ -356,17 +403,25 @@ bool FlashStack::read(uint8_t *buffer) {
             fstate.tail_offset = 0;
         }
     }
+    update_state_crc(); // crc: защита RTC_NOINIT_ATTR
     return true;
 }
 
-size_t FlashStack::count() {
-    return fstate.flash_total;
-}
+size_t FlashStack::count() { return fstate.flash_total; }
 
 bool FlashStack::clear() {
-    for (int i = 0; i < TOTAL_SECTORS; i++) {
-        esp_partition_erase_range(flash_partition, i * SECTOR_SIZE, SECTOR_SIZE);
+    if (!flash_partition)
+        return false;
+
+    for (int sec = 0; sec < TOTAL_SECTORS; sec++) {
+        esp_partition_erase_range(flash_partition, sec * SECTOR_SIZE,
+                                  SECTOR_SIZE);
+        if ((sec & 0x3F) == 0) {
+            esp_task_wdt_reset();
+            yield();
+        }
     }
-    init_flash_state();
+    init_flash_state(); // уже включает update_state_crc()
+    Serial.println("FlashStack cleared");
     return true;
 }

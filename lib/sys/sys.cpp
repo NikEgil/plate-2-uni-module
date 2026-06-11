@@ -613,14 +613,15 @@ bool isTime() {
         return false;
     }
 
-    // 🔹 НОВАЯ ПРОВЕРКА: если час 0 И минуты < 30 → возврат false
-    // (Интервал 00:00 ... 00:29:59)
+// 🔹 НОВАЯ ПРОВЕРКА: если час 0 И минуты < 30 → возврат false для обновления
+// времени с сети
+#if BOARD_TYPE == 1
     if (ti->tm_hour == 16 && ti->tm_min < 30) {
         Serial.printf("⏱ Time blocked: %02d:%02d (00:00-00:30 window)\n",
                       ti->tm_hour, ti->tm_min);
         return false;
     }
-
+#endif
     return true;
 }
 void printTimeFromHexBytes(const byte buf[6]) {

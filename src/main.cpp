@@ -1453,8 +1453,8 @@ void loop() {}
 uint32_t lastWorkTime = 0;
 uint32_t lastSleepTime = 0;
 uint32_t now = 0;
-const uint32_t WORK_INTERVAL_MS = 10UL * 60 * 1000;  // 30 минут
-const uint32_t SLEEP_INTERVAL_MS = 25UL * 60 * 1000; // 135 минут
+const uint32_t WORK_INTERVAL_MS = 30UL * 60 * 1000;  // 30 минут
+const uint32_t SLEEP_INTERVAL_MS = 135UL * 60 * 1000; // 135 минут
 // ----- Вспомогательная функция записи одного пакета -----
 
 void work() {
