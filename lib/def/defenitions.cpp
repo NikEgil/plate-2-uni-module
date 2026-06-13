@@ -1,13 +1,13 @@
 #include <defenitions.h>
 const int activeport[] = {1, 4};
-const int ID = 10010; // ваша глобальная переменная
+const int ID = 25; // ваша глобальная переменная
 
 // Глобальные константы, инициализированные в зависимости от ID
 const CalPoint CAL_LOW = (ID == 21)   ? CalPoint{3575, 3.047}
                          : (ID == 22) ? CalPoint{3808, 3.266}
                          : (ID == 23) ? CalPoint{3722, 3.262}
                          : (ID == 24) ? CalPoint{3334, 3.09}
-                         : (ID == 25) ? CalPoint{3334, 3.09}
+                         : (ID == 25) ? CalPoint{4115, 3.15}
 
                          : (ID == 20002) ? CalPoint{3741, 3.225}
 
@@ -20,14 +20,17 @@ const CalPoint CAL_LOW = (ID == 21)   ? CalPoint{3575, 3.047}
                          : (ID == 10007) ? CalPoint{3647, 3.260}
                          : (ID == 10008) ? CalPoint{3647, 3.260}
                          : (ID == 10009) ? CalPoint{3594, 3.260}
-                         : (ID == 10010) ? CalPoint{4335, 3.126}
+                         : (ID == 10010) ? CalPoint{4440, 3.126}
+                         : (ID == 10011) ? CalPoint{4335, 3.126}
+                         : (ID == 10012) ? CalPoint{4278, 3.126}
+
                                          : CalPoint{3697, 3};
 
 const CalPoint CAL_HIGH = (ID == 21)   ? CalPoint{4729, 4.094}
                           : (ID == 22) ? CalPoint{4871, 4.145}
                           : (ID == 23) ? CalPoint{4650, 4.08}
                           : (ID == 24) ? CalPoint{4490, 4.052}
-                          : (ID == 25) ? CalPoint{4490, 4.052}
+                          : (ID == 25) ? CalPoint{5164, 3.858}
 
                           : (ID == 20002) ? CalPoint{6244, 4.093}
 
@@ -41,6 +44,8 @@ const CalPoint CAL_HIGH = (ID == 21)   ? CalPoint{4729, 4.094}
                           : (ID == 10008) ? CalPoint{6427, 4.122}
                           : (ID == 10009) ? CalPoint{7356, 4.122}
                           : (ID == 10010) ? CalPoint{5698, 4.110}
+                          : (ID == 10011) ? CalPoint{5841, 4.135}
+                          : (ID == 10012) ? CalPoint{5469, 4.058}
 
                                           : CalPoint{6198, 4};
 

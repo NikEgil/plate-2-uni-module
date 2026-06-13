@@ -462,8 +462,8 @@ bool searchSensors(int port) {
     blink(1, 1000);
     enable_power(true);
     Serial.printf("			Search sensors, port	%i\n", port);
+    enable_sens(1);
     enable_sens(3);
-    enable_sens(4);
 
     delay(1000);
     if (port == 1) {
@@ -586,8 +586,8 @@ MeasureResult measure(int port) {
     digitalWrite(LED_PIN, HIGH);
     enable_power(true);
     Serial.printf("Measure, port %i\n", port);
+    enable_sens(1);
     enable_sens(3);
-    enable_sens(4);
 
     delay(1000);
     // Выбор канала
@@ -1412,7 +1412,11 @@ void setup() {
     switch (wake_but) {
     case 3:
         Serial.println("work first");
-        cleanUpStack();
+        // cleanUpStack();
+         for (int i = 0; i < 5; i++) {
+            tableSens[i] = 0x00; // Заполняем 0,1,2...7
+        }
+        saveArrayToFlash(tableSens);
         lora_activate(true);
 
         Serial.printf("Chanel set %i\n", ch);
@@ -1420,10 +1424,12 @@ void setup() {
         if (LoRa::configSet(17, ch)) {
             LoRa::configGet();
         }
+        blink(ch,500);
         snprintf(message, sizeof(message),
                  "stack count %d, lora ch %d, signal %d", stack.count(), ch,
                  signalp);
         saveMSG(message);
+        lora_check_signal();
         searchSensors(1);
         searchSensors(4);
         enable_sens(0);
@@ -1439,7 +1445,7 @@ void setup() {
         Serial.println("            complited");
         break;
     }
-    sleep(30);
+    sleep(TIME_TO_SLEEP);
 }
 void loop() {}
 #endif
@@ -1502,7 +1508,7 @@ void setup() {
         lora_activate(true);
         int ch = readSwitchState() + 1;
         Serial.printf("Chanel set %i\n", ch);
-        blink(1, 400);
+        blink(ch, 400);
         if (LoRa::configSet(17, ch)) {
             LoRa::configGet();
         }

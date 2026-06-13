@@ -70,7 +70,7 @@ def parse_wh65lp(raw: bytes, verify_crc: bool = True) -> dict:
     gust_raw = d[7]
     gust = None if gust_raw == 0xFF else gust_raw * 0.51
 
-    # Осадки
+    # Дождь
     rain_raw = (d[8] << 8) | d[9]
     rainfall = rain_raw * 0.254
 
@@ -90,7 +90,7 @@ def parse_wh65lp(raw: bytes, verify_crc: bool = True) -> dict:
         "family_code": family_code,
         "security_code": security_code,
         "low_battery": bool(low_battery),
-        "air_temperature": round(temperature, 1) if temperature is not None else None,
+        "air_temperature": temperature,
         "air_humidity": humidity,
         "air_pressure": round(pressure, 2) if pressure is not None else None,
         "wind_direction": wind_direction,
@@ -140,16 +140,13 @@ def decode_sensor(data: bytes, sid: int, cfg: dict) -> dict:
         weather = parse_wh65lp(data, verify_crc=True)
         for name, value in weather.items():
             if value is None:
-                res["decoded"][name] = {"value": None, "valid": False}
-            elif isinstance(value, bool):
-                res["decoded"][name] = {"value": value}
+                res["decoded"][name] = None
             else:
-                res["decoded"][name] = {"value": value, "valid": True}
+                res["decoded"][name] = value
         return res
-
     fmap = cfg.get("field_mapping", {}).get(str(sid), [])
     if not fmap:
-        res["decoded"] = {"raw": data.hex(), "note": "Нет конфигурации"}
+        res["decoded"] = {"raw": data.hex(), "note": "нет конфигурации"}
         return res
     for f in fmap:
         off = (f["byte"] - 1) * 2
@@ -163,6 +160,80 @@ def decode_sensor(data: bytes, sid: int, cfg: dict) -> dict:
                 "value": rounded,
             }
     return res
+
+# -------------------------------------------------------------
+# Служебные пакеты (дополнение)
+# -------------------------------------------------------------
+
+def decode_service_field_packet(hex_str: str) -> str:
+    """Декодирование служебного пакета от полевого модуля (encode_to_buffer).
+    
+    Формат: LEN(1) + ID_field(3) + 0xFF 0xFF 0xFF + time(6) + message(N)
+    """
+    hex_str = hex_str.replace(" ", "")
+    data = bytes.fromhex(hex_str)
+
+    pkt_len = data[0]
+    mod_id = int.from_bytes(data[1:4], "big")
+    ff_marker = data[4:7]
+    if ff_marker != b'\xff\xff\xff':
+        return json.dumps({"error": "Not a service field packet (missing FF FF FF marker)"}, ensure_ascii=False)
+
+    year = data[7]
+    month = data[8]
+    day = data[9]
+    hour = data[10]
+    minute = data[11]
+    second = data[12]
+    date_str = f"20{year:02d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+
+    # Остальное — текст ASCII
+    msg_bytes = data[13:pkt_len]
+    message = msg_bytes.decode("ascii", errors="replace")
+
+    result = {
+        "packet_type": "service_field",
+        "pkt_len": pkt_len,
+        "field_id": f"{mod_id:08d}",
+        "time": date_str,
+        "message": message,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+def decode_head_only_packet(hex_str: str, server_time: str = None) -> str:
+    """Декодирование заголовочного пакета от головного модуля (adding без сенсорных данных).
+    
+    Формат: ccid(10) + ID_gm(3) + bat(1) + signal(1) + rssi(1) = 16 байт
+    """
+    hex_str = hex_str.replace(" ", "")
+    data = bytes.fromhex(hex_str)
+
+    if len(data) < 16:
+        return json.dumps({"error": f"Header-only packet too short: {len(data)} bytes"}, ensure_ascii=False)
+
+    ccid = data[0:10].hex().upper()
+    module_id = int.from_bytes(data[10:13], "big")
+    bat_head_voltage = data[13] / 10.0
+    signal = data[14]
+    rssi = data[15]
+
+    head_sens = {
+        "ccid": ccid,
+        "id_s": f"{module_id:08d}",
+        "batt": voltage_to_percent(bat_head_voltage),
+        "signal": signal,
+        "rssi": rssi,
+    }
+    if server_time:
+        head_sens["server_received_at"] = server_time
+
+    result = {
+        "packet_type": "head_only",
+        "head_sens": head_sens,
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
 
 # -------------------------------------------------------------
 # Основная функция декодирования пакета
@@ -183,6 +254,46 @@ def decode_hex_packet(
     rssi = data[15]
     off = 16
     block_start = off   # начало блока для CRC (байт pkt_len)
+
+    # ---------- Детекция служебных пакетов ----------
+
+    # Служебный пакет от полевого модуля: после заголовка идёт FF FF FF
+    # (encode_to_buffer: LEN + ID_field + 0xFF 0xFF 0xFF + time + message)
+    if off + 4 <= len(data) and data[off+1:off+4] == b'\xff\xff\xff':
+        # Заголовок ГМ отсутствует — значит это пакет без заголовка
+        # (полевой модуль сам отправляет encode_to_buffer через LoRa)
+        # В этом случае ccid/module_id/signal/rssi = 0, а данные начинаются с off
+        return decode_service_field_packet(hex_str)
+
+    # Если заголовок есть (ccid != 0) и дальше идёт pkt_len с FF FF FF
+    # — значит adding() обернул encode_to_buffer
+    if off + 4 <= len(data) and data[off+4:off+7] == b'\xff\xff\xff':
+        # Это adding() + encode_to_buffer: header(16) + service_field_payload
+        # Декодируем заголовок ГМ + вложенный служебный пакет
+        service_data = data[off:]
+        service_json = json.loads(decode_service_field_packet(service_data.hex()))
+        head_sens = {
+            "ccid": ccid,
+            "id_s": f"{module_id:08d}",
+            "batt": voltage_to_percent(bat_head_voltage),
+            "signal": signal,
+        }
+        if rssi != 0:
+            head_sens["rssi"] = rssi
+        if server_time:
+            head_sens["server_received_at"] = server_time
+        result = {
+            "packet_type": "service_message",
+            "head_sens": head_sens,
+            "field_sens": service_json,
+        }
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    # Заголовок ГМ без данных сенсоров: ровно 16 байт
+    if len(data) == 16:
+        return decode_head_only_packet(hex_str, server_time)
+
+    # ---------- Обычный пакет (существующий алгоритм) ----------
 
     # ---------- FIELD ----------
     pkt_len = data[off]
@@ -250,14 +361,14 @@ def decode_hex_packet(
             result["ports"].setdefault(port_key, []).append(sensor_item)
             continue
 
-        # ----- Стандартный формат -----
-        op = data[off]      # не используется, но пропускаем
+        # ----- Прочие датчики -----
+        op = data[off]
         off += 1
         dlen = data[off]
         off += 1
         sdata = data[off:off+dlen]
         off += dlen
-        scrc = int.from_bytes(data[off:off+2], "big")   # CRC сенсора (big-endian)
+        scrc = int.from_bytes(data[off:off+2], "big")
         off += 2
 
         decoded = decode_sensor(sdata, address, config)
@@ -270,9 +381,9 @@ def decode_hex_packet(
         port_key = f"port_{port}"
         result["ports"].setdefault(port_key, []).append(sensor_item)
 
-    # ---------- Общая CRC ----------
-    total_block = data[block_start:off]          # блок от pkt_len до последнего байта перед CRC
-    total_crc = int.from_bytes(data[off:off+2], "little")   # CRC пакета в big-endian
+    # ---------- Итоговая CRC ----------
+    total_block = data[block_start:off]
+    total_crc = int.from_bytes(data[off:off+2], "little")
     computed_crc = calc_crc16(total_block)
     result["crc_total"] = total_crc
     result["crc_total_valid"] = (computed_crc == total_crc)
@@ -280,9 +391,4 @@ def decode_hex_packet(
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
-if __name__ == "__main__":
-    hex_input = (
-        "89 70 10 18 29 25 56 46 91 87 03 0D 42 2F 4D 11 3B 03 0D 42 2F 1A 05 15 10 27 0E 01 24 BC DF 02 71 3F 00 00 00 00 00 06 00 20 94 A7 D2 01 87 CD 55 00 29 9E 15 04 07 03 0E 00 00 00 DF 00 00 00 4E 00 00 00 00 00 00 3A 67 C4 D9"
-    )
-    json_str = decode_hex_packet(hex_input, server_time="2026-05-14 12:00:00")
-    print(json_str)
+print(decode_hex_packet("8970101829255646914600001911430014000019ffffff1a060b07082c77616b65207570"))
