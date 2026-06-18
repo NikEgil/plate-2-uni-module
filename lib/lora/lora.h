@@ -3,7 +3,7 @@
 #include <LoRa_E220.h>
 #include <defenitions.h>
 // 🔹 Пины для ESP32-S2 (настраиваются при компиляции)
-#if NET ==0 or NET ==2
+#if NET == 0 or NET == 2
 
 namespace LoRa {
 
@@ -13,10 +13,10 @@ bool end();
 // 🔹 Информация о модуле
 void printModuleInfo();
 bool getModuleInfo(struct ModuleInformation *outInfo);
-    int receivePacketNB(uint8_t* outBuf, size_t maxSize);
+int receivePacketNB(uint8_t *outBuf, size_t maxSize);
 
 // 🔹 Опционально: отдельная проверка наличия данных
-bool packetAvailable();// 🔹 Конфигурация
+bool packetAvailable();                           // 🔹 Конфигурация
 void configGet();                                 // Печать текущей конфигурации
 bool configSet(uint8_t channel, uint8_t address); // Установка новой
 

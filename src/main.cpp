@@ -107,7 +107,7 @@ void loadConfigFromNVS() {
     Preferences prefs;
     prefs.begin("sim-config", true); // read-only
     if (prefs.isKey("url")) {
-        URL = prefs.getString("url", "test.rootsapp.ru");
+        URL = prefs.getString("url", "mqtt.rootsapp.ru");
         Port = prefs.getString("port", "80").toInt();
         Link = prefs.getString("link", "/gateway/packets");
         Serial.println("[NVS] Загружены настройки:");
@@ -119,7 +119,7 @@ void loadConfigFromNVS() {
         Link = "/gateway/packets";
         URL = "test.rootsapp.ru";
         Port = 80;
-        saveMSG("ERROR read NVS, default falue");
+        // saveMSG("ERROR read NVS, default falue");
     }
 
     prefs.end();
@@ -230,6 +230,9 @@ bool searchSensors(int port) {
     tableSens[port] = response[0];
     saveArrayToFlash(tableSens);
     enable_sens(0);
+    snprintf(message, sizeof(message),
+             "search sensor, port %d, address sens %d", port, (int)response[0]);
+    saveMSG(message);
     // enable_power(0);
     if (response[0] != 0x00) {
         blink((int)response[0], 100);
@@ -767,16 +770,16 @@ void getNetTime() {
 }
 
 void simres() {
-    enable_power(true);
+    // enable_power(true);
     Serial.println("sim pwr low");
     // digitalWrite(SIM_PWR, LOW);
-    enable_sim(true);
-    enable_sim(false);
+    // enable_sim(true);
+    // enable_sim(false);
     delay(1000);
     Serial.println("sim pwr high");
 
     // 2. Ждём загрузки модуля
-    delay(10000);
+    // delay(10000);
     yield();
 
     // 3. Программная инициализация
@@ -846,9 +849,9 @@ bool sim_activate(bool act) {
         SimModule::activate(false);
         SimModule::end();
         // enable_sim(false);
-        enable_power(false);
+        // enable_power(false);
 
-        activate_sim(false);
+        // activate_sim(false);
 
         Serial.println("\tsim disconnected");
         return true;
@@ -866,16 +869,17 @@ bool sim_activate(bool act) {
 
         // activate_sim(true);
 
-        enable_power(1);
-        delay(2000);
+        // enable_power(1);
+        // delay(2000);
         // enable_sim(1);
-        // // 2. Ждём загрузки модуля
+        // // // 2. Ждём загрузки модуля
         // delay(10000);
         esp_task_wdt_reset();
 
         yield();
         // 3. Программная инициализация
         SimModule::begin();
+        delay(2000);
         esp_task_wdt_reset();
         yield();
 
@@ -979,7 +983,7 @@ bool http_send() {
     yield();
     int pac_to_send = stack.count();
     Serial.printf("packets to sending - %i\n", pac_to_send);
-    int consecutive_failures =0; // подряд неудачные ПОПЫТКИ 
+    int consecutive_failures = 0; // подряд неудачные ПОПЫТКИ
     SimModule::httpBegin(URL.c_str(), Port);
     for (int i = 0; i < pac_to_send; i++) {
         yield();
@@ -993,15 +997,21 @@ bool http_send() {
         int len = adding();
         Serial.printf("   Prepared packet #%d, len %i\n", i, len);
         printHEX(a_packet, len);
+        esp_task_wdt_reset();
+
         if (SimModule::httpSendPacketSafe(a_packet, len, IDchar, Link.c_str(),
                                           URL.c_str(), Port)) {
             Serial.printf("   ✅ packet #%d sent \n", i);
             blink(1, 500);
             consecutive_failures = 0; // успех – сбрасываем счётчик
+            esp_task_wdt_reset();
+            yield();
         } else {
             Serial.printf("   ❌ packet #%d NOT sent\n", i);
             stack.write(g_packet);
             consecutive_failures++;
+            esp_task_wdt_reset();
+            yield();
             if (consecutive_failures >= 3) {
                 SimModule::httpEnd();
                 return false; // две подряд неудачи разных пакетов
@@ -1021,9 +1031,9 @@ void lora_activate(bool act) {
         enable_lora(1);
         delay(1000);
         Serial.printf("LoRa:: begin, %i\n", LoRa::begin());
+        delay(1000);
     } else {
         Serial.printf("LoRa:: begin, %i\n", LoRa::end());
-
         enable_lora(0);
         delay(1000);
     }
@@ -1042,9 +1052,6 @@ void LORA_sendOK() {
 
     LoRa::send(pac, 10);
 }
-
-
-
 
 bool lora_send() {
     const unsigned long SESSION_TIMEOUT = 1000 * 60; // 2 минуты на сеанс
@@ -1144,6 +1151,17 @@ bool lora_send() {
     return true; // все пакеты отправлены успешно
 }
 
+void lora_setconf() {
+    lora_activate(true);
+    int ch = readSwitchState() + 1;
+    Serial.printf("Chanel set %i\n", ch);
+    blink(ch, 400);
+    if (LoRa::configSet(17, ch)) {
+        LoRa::configGet();
+    }
+    lora_activate(false);
+}
+
 int lora_rssi(byte *pac) {
     int len = 0;
     if (LoRa::send(pac, pac[0])) {
@@ -1190,6 +1208,7 @@ void lora_check_signal() {
     }
     size_t len = preparePacket(pac, 11, ID, Battery, dateBytes);
     pac[0] = (byte)(len);
+    lora_activate(1);
     int rssi = lora_rssi(pac);
     if (rssi == -1) {
         blink(10, 250);
@@ -1209,6 +1228,7 @@ void lora_check_signal() {
         Serial.printf("rssi %i, 5\n", rssi);
         blink(5, 750);
     }
+    lora_activate(false);
 }
 #endif
 
@@ -1316,12 +1336,7 @@ void setup() {
             blink(1, 50);
         }
     }
-    Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
-    uint32_t cpu_mhz = getCpuFrequencyMhz(); // частота CPU в МГц
-    uint32_t apb_mhz = getApbFrequency();    // частота шины APB (обычно 80 МГц)
 
-    Serial.printf("CPU Frequency: %u MHz\n", cpu_mhz);
-    Serial.printf("APB Frequency: %u Hz\n", apb_mhz);
     Battery = readBatteryVoltage();
     RsModbus::init(REDE);
     delay(1000);
@@ -1338,17 +1353,15 @@ void setup() {
         Serial.println("Ошибка: раздел flashbuf не найден!");
     }
     Serial.printf("State wake up %i\n\n", wake_but);
-    byte pac[198] = {0};
-    int q = 0;
     switch (wake_but) {
     case 1:
-        lora_check_signal();
-        sleep(10);
+        // lora_check_signal();
+        // sleep(10);
         break;
     case 2:
-        searchSensors(1);
-        searchSensors(4);
-        sleep(10);
+        // searchSensors(1);
+        // searchSensors(4);
+        // sleep(10);
         break;
     case 3:
         Serial.println("work first");
@@ -1356,12 +1369,14 @@ void setup() {
             tableSens[i] = 0x00;
         }
         saveArrayToFlash(tableSens);
-        cleanUpStack();
+        // cleanUpStack();
+        lora_setconf();
         lora_check_signal();
         searchSensors(1);
         searchSensors(4);
         enable_sens(0);
         enable_power(0);
+        saveMSG("wake up");
         sleep(10);
         break;
     default:
@@ -1375,11 +1390,11 @@ void setup() {
     sleep(TIME_TO_SLEEP);
 }
 void loop() {}
-
-#elif BOARD_REV == 1 and BOARD_TYPE == 0 and NET == 0
 //
 // ПМ старая плата
 //
+#elif BOARD_REV == 1 and BOARD_TYPE == 0 and NET == 0
+
 void setup() {
     initPins();
     Serial.begin(115200); // монитор порта
@@ -1413,7 +1428,7 @@ void setup() {
     case 3:
         Serial.println("work first");
         // cleanUpStack();
-         for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 5; i++) {
             tableSens[i] = 0x00; // Заполняем 0,1,2...7
         }
         saveArrayToFlash(tableSens);
@@ -1424,7 +1439,7 @@ void setup() {
         if (LoRa::configSet(17, ch)) {
             LoRa::configGet();
         }
-        blink(ch,500);
+        blink(ch, 500);
         snprintf(message, sizeof(message),
                  "stack count %d, lora ch %d, signal %d", stack.count(), ch,
                  signalp);
@@ -1459,7 +1474,7 @@ void loop() {}
 uint32_t lastWorkTime = 0;
 uint32_t lastSleepTime = 0;
 uint32_t now = 0;
-const uint32_t WORK_INTERVAL_MS = 30UL * 60 * 1000;  // 30 минут
+const uint32_t WORK_INTERVAL_MS = 30UL * 60 * 1000;   // 30 минут
 const uint32_t SLEEP_INTERVAL_MS = 135UL * 60 * 1000; // 135 минут
 // ----- Вспомогательная функция записи одного пакета -----
 
@@ -1502,21 +1517,15 @@ void setup() {
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
         // cleanUpStack();
+        // simres();
 
         // sleep(10);
         SIM_check_signal();
-        lora_activate(true);
-        int ch = readSwitchState() + 1;
-        Serial.printf("Chanel set %i\n", ch);
-        blink(ch, 400);
-        if (LoRa::configSet(17, ch)) {
-            LoRa::configGet();
-        }
-        snprintf(message, sizeof(message),
-                 "stack count %d, lora ch %d, signal %d", stack.count(), ch,
-                 signalp);
-        saveMSG(message);
+        lora_setconf();
     }
+    snprintf(message, sizeof(message), "stack count %d, signal %d",
+             stack.count(), signalp);
+    saveMSG(message);
     saveMSG("wake up");
     uint32_t now = millis();
     if (lastWorkTime == 0)

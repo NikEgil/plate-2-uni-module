@@ -26,14 +26,14 @@ void initPins() {
     analogSetAttenuation(ADC_6db);
     esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
                              &adc_chars);
-    pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-    uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
+    // pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    // pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    uint64_t btnMask = (1ULL << 1ULL) | (1ULL << 1ULL);
 
     pinMode(SW1_PIN, INPUT_PULLUP);
     pinMode(SW2_PIN, INPUT_PULLUP);
     // Настраиваем пробуждение по любому из этих пинов (LOW)
-    esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
+    // esp_sleep_enable_ext1_wakeup();
 }
 #elif BOARD_REV == 3 and BOARD_TYPE == 2
 void initPins() {
@@ -74,14 +74,14 @@ void initPins() {
     analogSetAttenuation(ADC_6db);
     esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_6, ADC_WIDTH_BIT_13, 3300,
                              &adc_chars);
-    pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-    uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
+    // pinMode(BUT1, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    // pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
+    // uint64_t btnMask = (1ULL << BUT1) | (1ULL << BUT2);
 
     pinMode(SW1_PIN, INPUT_PULLUP);
     pinMode(SW2_PIN, INPUT_PULLUP);
     // Настраиваем пробуждение по любому из этих пинов (LOW)
-    esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
+    // esp_sleep_enable_ext1_wakeup(btnMask, ESP_EXT1_WAKEUP_ANY_LOW);
 }
 #elif BOARD_REV == 1 and BOARD_TYPE == 0
 void initPins() {
@@ -151,22 +151,22 @@ uint8_t checkButton() {
     }
 
     // 🔹 1 или 2: Пробуждение по кнопкам (EXT1)
-    if (cause == ESP_SLEEP_WAKEUP_EXT1) {
-        uint64_t status = esp_sleep_get_ext1_wakeup_status();
+    // if (cause == ESP_SLEEP_WAKEUP_EXT1) {
+    //     uint64_t status = esp_sleep_get_ext1_wakeup_status();
 
-        // Дебаунс: ждём стабилизации сигнала
-        delay(10);
+    //     // Дебаунс: ждём стабилизации сигнала
+    //     delay(10);
 
-        // Проверяем какой пин вызвал пробуждение
-        if (status & (1ULL << BUT1)) {
-            waitForButtonRelease(); // Ждём отпускания (твоя функция)
-            return 1;
-        }
-        if (status & (1ULL << BUT2)) {
-            waitForButtonRelease();
-            return 2;
-        }
-    }
+    //     // Проверяем какой пин вызвал пробуждение
+    //     if (status & (1ULL << BUT1)) {
+    //         waitForButtonRelease(); // Ждём отпускания (твоя функция)
+    //         return 1;
+    //     }
+    //     if (status & (1ULL << BUT2)) {
+    //         waitForButtonRelease();
+    //         return 2;
+    //     }
+    // }
 
     // 🔹 0: Таймер или другая причина (обычный рабочий цикл)
     return 0;
@@ -177,9 +177,9 @@ void waitForButtonRelease() {
     // Это защита от дребезга и удержания кнопки при уходе в сон
     Serial.println("Waiting for release...");
     for (int i = 0; i < 20; i++) {
-        if (digitalRead(BUT1) == LOW || digitalRead(BUT2) == LOW) {
-            return;
-        }
+        // if (digitalRead(BUT1) == LOW || digitalRead(BUT2) == LOW) {
+        //     return;
+        // }
         delay(10);
     }
 }
@@ -326,23 +326,23 @@ void enable_power(bool act) {
 
 #if BOARD_TYPE == 0
 
-void enable_power(bool act) {
-    // Если состояние уже соответствует запросу — ничего не делаем
-    if (act == isPowered) {
-        return;
-    }
-    if (act) {
-        digitalWrite(EP, HIGH);
-        delay(1000);
-        Serial.println("POWER ON");
-        isPowered = true;
-    } else {
-        digitalWrite(EP, LOW);
-        delay(400);
-        Serial.println("POWER OFF");
-        isPowered = false;
-    }
-}
+// void enable_power(bool act) {
+//     // Если состояние уже соответствует запросу — ничего не делаем
+//     if (act == isPowered) {
+//         return;
+//     }
+//     if (act) {
+//         digitalWrite(EP, HIGH);
+//         delay(1000);
+//         Serial.println("POWER ON");
+//         isPowered = true;
+//     } else {
+//         digitalWrite(EP, LOW);
+//         delay(400);
+//         Serial.println("POWER OFF");
+//         isPowered = false;
+//     }
+// }
 
 void enable_sens(int port) {
     if (port == isPortEnable) {

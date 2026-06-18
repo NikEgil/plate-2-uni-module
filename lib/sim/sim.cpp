@@ -17,6 +17,7 @@ bool isGprsConnected = false;
 } // namespace
 
 namespace SimModule {
+
 void begin(int rxPin, int txPin, uint32_t baud) {
     end();
     if (rxPin == -1)

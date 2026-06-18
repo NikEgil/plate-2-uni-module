@@ -1,6 +1,7 @@
 #include <defenitions.h>
 const int activeport[] = {1, 4};
-const int ID = 25; // ваша глобальная переменная
+const int ID = 21; // ваша глобальная переменная
+const char *IDchar = "00000021";
 
 // Глобальные константы, инициализированные в зависимости от ID
 const CalPoint CAL_LOW = (ID == 21)   ? CalPoint{3575, 3.047}
@@ -50,11 +51,11 @@ const CalPoint CAL_HIGH = (ID == 21)   ? CalPoint{4729, 4.094}
                                           : CalPoint{6198, 4};
 
 #if NET > 0
-const char *apn = "m2m.mts.ru"; // Access Point Name
+const char *apn = "internet.mts.ru"; // Access Point Name
 const char *gprsUser = "mts";   // GPRS username (if required)
 const char *gprsPass = "mts";   // GPRS password (if required)
 
-const char *IDchar = "00000025";
+// const char *IDchar = "00000022";
 
 #endif
 

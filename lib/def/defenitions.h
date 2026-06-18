@@ -33,8 +33,6 @@ constexpr int RS2RX = 7;
 constexpr int RS2TX = 6;
 constexpr int REDE = 11;
 constexpr int ADC = 10;
-constexpr int BUT1 = 8;
-constexpr int BUT2 = 9;
 constexpr int SW1_PIN = 35;
 constexpr int SW2_PIN = 36;
 #elif BOARD_REV == 2 and BOARD_TYPE == 0
@@ -137,7 +135,8 @@ constexpr int LORA_DEFAULT_ADDRESS = 01;
 #elif NET==2 and BOARD_REV==3
 constexpr int SIMRX = 5;
 constexpr int SIMTX = 4;
-constexpr int SIM_BAUD = 2400;
+constexpr int SIM_BAUD 
+= 2400;
 constexpr int MODEM_PWR_PIN = 40;
 extern const char *apn;      // Access Point Name
 extern const char *gprsUser; // GPRS username (if required)
