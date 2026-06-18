@@ -7,7 +7,6 @@
 class FlashStack {
 public:
     static const size_t DATA_LENGTH = 198;   // подстройте под свой размер данных
-
     FlashStack();
     bool begin();                            // инициализация, один раз при старте
     bool write(const uint8_t *data);         // запись одного пакета

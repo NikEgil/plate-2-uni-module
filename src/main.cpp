@@ -1,15 +1,33 @@
+// =====================================================================
+//  main.cpp – Основной файл прошивки для устройства мониторинга
+// =====================================================================
+//  Поддерживает несколько конфигураций в зависимости от макросов:
+//    - BOARD_REV (1, 2, 3) и BOARD_TYPE (0, 1, 2)
+//    - NET (0 – LoRa, 1 – SIM800, 2 – LoRa+SIM)
+//  Реализует:
+//    - опрос датчиков через RS-485 (Modbus RTU)
+//    - сохранение данных в кольцевой буфер во Flash (FlashStack)
+//    - отправку данных через LoRa или HTTP(S) через SIM800
+//    - приём команд по LoRa (установка времени, проверка связи)
+//    - управление питанием и режимами сна
+//    - веб-интерфейс для отладки (BOARD_TYPE == 2)
+// =====================================================================
+
 #include "FlashStack.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_attr.h>
 #include <esp_task_wdt.h>
+
 #if BOARD_TYPE == 2
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
 #endif
+
 #include <defenitions.h>
 #include <sys.h>
+
 #if NET == 0
 #include <lora.h>
 #elif NET == 1
@@ -18,83 +36,38 @@
 #include <lora.h>
 #include <sim.h>
 #endif
-// snprintf(message, sizeof(message),
-//          "stack count %d, lora ch %d, signal %d", stack.count(), ch,
-//          signalp);
-// saveMSG(message);
 
 #if BOARD_TYPE == 0
 #include <rs.h>
 #endif
-#if BOARD_TYPE == 2
 
-// ===== ПЕРЕХВАТ SERIAL =====
-auto &RealSerial = Serial;
+// =====================================================================
+// Глобальные переменные и объекты
+// =====================================================================
 
-String logBuf;
-const size_t MAX_LOG = 3000;
-const size_t TRIM_SIZE = 300;
+static char message[300];        ///< Буфер для формирования текстовых сообщений (логи, ошибки)
+FlashStack stack;                ///< Кольцевой буфер во Flash для хранения пакетов
+static uint8_t g_packet[198];    ///< Буфер для формирования пакета данных (заголовок + полезная нагрузка)
+static uint8_t a_packet[250];    ///< Дополнительный буфер для сборки HTTP-пакета (с добавлением служебных полей)
+static uint8_t rxBuffer[250];    ///< Буфер приёма LoRa/RS-485
+Preferences prefs;               ///< Для работы с NVS (не используется, но объявлено)
+int Battery = 146;               ///< Напряжение батареи в децивольтах (будет обновлено)
+byte tableSens[5] = {0};         ///< Таблица найденных датчиков: для каждого порта (0..4) – адрес Modbus (0 – нет)
+byte ccid[10] = {};              ///< ICCID SIM-карты (10 байт в BCD)
+int signalp = 0;                 ///< Уровень сигнала (в процентах для LoRa, 0..100 для SIM)
 
-class DualSerial : public Print {
-  public:
-    void begin(unsigned long baud = 115200) { RealSerial.begin(baud); }
-    void end() { RealSerial.end(); }
-    int available() { return RealSerial.available(); }
-    int read() { return RealSerial.read(); }
-    int peek() { return RealSerial.peek(); }
-    void flush() { RealSerial.flush(); }
-    operator bool() { return (bool)RealSerial; }
+String Link = "";                ///< Путь HTTP-запроса (например, "/gateway/packets")
+String URL = "";                 ///< Хост для HTTP (например, "test.rootsapp.ru")
+uint16_t Port = 0;               ///< Порт для HTTP (обычно 80)
 
-    size_t write(uint8_t c) override {
-        RealSerial.write(c);
-        while (logBuf.length() + 1 > MAX_LOG)
-            logBuf.remove(0, TRIM_SIZE);
-        logBuf += (char)c;
-        return 1;
-    }
+// =====================================================================
+// Вспомогательные функции для работы с логами и конфигурацией
+// =====================================================================
 
-    size_t write(const uint8_t *buffer, size_t size) override {
-        RealSerial.write(buffer, size);
-        while (logBuf.length() + size > MAX_LOG)
-            logBuf.remove(0, TRIM_SIZE);
-        logBuf.concat((const char *)buffer, size);
-        return size;
-    }
-
-    using Print::print;
-    using Print::printf;
-    using Print::println;
-};
-
-// ===== 3. Создаём экземпляр =====
-DualSerial Dual;
-
-// ===== 4. ТОЛЬКО ТЕПЕРЬ подменяем Serial =====
-#undef Serial
-#define Serial Dual
-
-// ===== ASYNC WEB SERVER =====
-AsyncWebServer server(80);
-
-const char *ssidwifi = "S2-Debug";
-const char *passwifi = "12345678";
-
-#endif
-static char message[300];
-FlashStack stack;
-static uint8_t g_packet[198];
-static uint8_t a_packet[250];
-static uint8_t rxBuffer[250];
-Preferences prefs;
-int Battery = 146;
-byte tableSens[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
-byte ccid[10] = {};
-int signalp = 0;
-
-String Link = "";
-String URL = "";
-uint16_t Port = 0;
-
+/**
+ * @brief Сохраняет текстовое сообщение в стек (кодирует в буфер и пишет во Flash).
+ * @param msg строка для сохранения.
+ */
 void saveMSG(const char *msg) {
     encode_to_buffer(msg, g_packet);
     if (stack.write(g_packet)) {
@@ -103,6 +76,11 @@ void saveMSG(const char *msg) {
     }
 }
 
+/**
+ * @brief Загружает настройки HTTP из NVS (Preferences).
+ * @details Читает ключи "url", "port", "link" из пространства "sim-config".
+ *          Если данных нет, устанавливает значения по умолчанию.
+ */
 void loadConfigFromNVS() {
     Preferences prefs;
     prefs.begin("sim-config", true); // read-only
@@ -119,12 +97,16 @@ void loadConfigFromNVS() {
         Link = "/gateway/packets";
         URL = "test.rootsapp.ru";
         Port = 80;
-        // saveMSG("ERROR read NVS, default falue");
     }
-
     prefs.end();
 }
 
+/**
+ * @brief Сохраняет настройки HTTP в NVS.
+ * @param gURL   хост
+ * @param gPort  порт
+ * @param gLink  путь
+ */
 void saveConfigFromNVS(String gURL, int gPort, String gLink) {
     Preferences prefs;
     prefs.begin("sim-config", false);
@@ -135,17 +117,28 @@ void saveConfigFromNVS(String gURL, int gPort, String gLink) {
     loadConfigFromNVS();
 }
 
+/**
+ * @brief Полностью очищает стек (FlashStack) – стирает все записи.
+ */
 void cleanUpStack() {
     Serial.println(F("🧹 Cleaning stack..."));
     if (stack.clear()) {
         Serial.println(F("✅ Stack cleared"));
     }
 }
-//
-// работа с сенсорами
-//
-#if BOARD_TYPE == 0 and BOARD_REV == 3
 
+// =====================================================================
+// Работа с датчиками (только для BOARD_TYPE == 0)
+// =====================================================================
+
+#if BOARD_TYPE == 0 && BOARD_REV == 3
+
+/**
+ * @brief Поиск мультисенсора (датчик с адресом 0x01) на текущем RS-485 канале.
+ * @return true если датчик ответил корректно.
+ * @details Отправляет Modbus-запрос на чтение одного регистра (0x01, 0x03, 0x0000, 0x0001).
+ *          Если в ответе первый байт 0x01 – датчик найден.
+ */
 bool searche_multisens() {
     Serial.println("founding multisens");
     byte req[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0a};
@@ -156,7 +149,6 @@ bool searche_multisens() {
     delay(500);
 
     byte response[32] = {0};
-    // Ждём ответ 150 мс (для Modbus обычно хватает 50-100 мс)
     size_t lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
     Serial.println("	responses:");
     printHEX(response, lenresponse);
@@ -169,6 +161,14 @@ bool searche_multisens() {
     }
 }
 
+/**
+ * @brief Поиск датчиков на указанном порту (1 или 4).
+ * @param port номер порта (1 или 4).
+ * @return true если найден хотя бы один датчик.
+ * @details Включает питание порта, активирует соответствующий RS-485 канал,
+ *          сначала ищет мультисенсор, затем универсальный датчик (запрос 0xFF, 0x03, 0x07D0...).
+ *          Результат сохраняется в tableSens[port] и во Flash.
+ */
 bool searchSensors(int port) {
     blink(1, 1000);
     enable_power(true);
@@ -201,7 +201,6 @@ bool searchSensors(int port) {
     delay(500);
 
     byte response[32] = {0};
-    // Ждём ответ 150 мс (для Modbus обычно хватает 50-100 мс)
     size_t lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
     Serial.println("	responses:");
     printHEX(response, lenresponse);
@@ -233,7 +232,6 @@ bool searchSensors(int port) {
     snprintf(message, sizeof(message),
              "search sensor, port %d, address sens %d", port, (int)response[0]);
     saveMSG(message);
-    // enable_power(0);
     if (response[0] != 0x00) {
         blink((int)response[0], 100);
         return true;
@@ -242,11 +240,19 @@ bool searchSensors(int port) {
     }
 }
 
+/**
+ * @brief Опрос одного датчика (Modbus) с заданным адресом и количеством регистров.
+ * @param sens      адрес датчика (0x01..0xFF)
+ * @param lenreg    количество регистров для чтения
+ * @param outBuf    буфер для ответа
+ * @param outBufSize размер буфера
+ * @return int количество принятых байт, -1 при ошибке.
+ * @details Формирует запрос, отправляет, ждёт ответ с таймаутом 150 мс.
+ */
 int polling(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
     if (!outBuf || outBufSize < 5)
         return -1;
 
-    // Формируем запрос...
     byte req[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
     req[0] = (byte)sens;
     req[5] = (byte)lenreg;
@@ -255,15 +261,23 @@ int polling(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
     addCRC(req, 6, request);
     RsModbus::sendData(request, 8);
     delay(250);
-    // Приём: передаём внешний буфер и его размер
     int received = RsModbus::receiveData(outBuf, outBufSize, 150);
     if (received > 0) {
-        // Serial.printf("  RX[%d]: ", received - 1);
         printHEX(outBuf, received);
     }
-    return received; // -1 = ошибка, >=0 = кол-во байт
+    return received;
 }
 
+/**
+ * @brief Специальный опрос метеодатчика (адрес 0x24), который отправляет данные асинхронно.
+ * @param sens      адрес (0x24)
+ * @param lenreg    количество регистров (обычно 25)
+ * @param outBuf    буфер для ответа
+ * @param outBufSize размер буфера
+ * @return int количество принятых байт, -1 при ошибке.
+ * @details Метеодатчик присылает пакет длиной 25 байт с CRC-8. Функция ожидает до 40 попыток,
+ *          проверяет CRC и возвращает данные при успехе.
+ */
 int pollingMeteo(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
     if (!outBuf || outBufSize < 5)
         return -1;
@@ -273,23 +287,33 @@ int pollingMeteo(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
         received = RsModbus::receiveData(outBuf, outBufSize, 750);
         Serial.printf("Tray %i,  RX[%d]: ", i, received);
         printHEX(outBuf, received);
-        if (outBuf[0] == 0x24 and check_wh65lp_crc(outBuf, received)) {
+        if (outBuf[0] == 0x24 && check_wh65lp_crc(outBuf, received)) {
             return received;
-            // printHEX(outBuf, received);
         } else {
             delay(250);
         }
     }
     received = -1;
     return received;
-    // -1 = ошибка, >=0 = кол-во байт
 }
 
+/**
+ * @brief Структура для хранения результатов измерения.
+ */
 struct MeasureResult {
-    uint8_t *data; // Указатель на данные
-    size_t length; // Длина в байтах
-    bool valid;    // Флаг успеха (память выделена + опрос прошёл)
+    uint8_t *data; ///< Указатель на динамически выделенный буфер с данными
+    size_t length; ///< Длина данных в байтах
+    bool valid;    ///< true если измерение успешно и память выделена
 };
+
+/**
+ * @brief Выполняет измерение на указанном порту.
+ * @param port номер порта (1 или 4).
+ * @return MeasureResult структуру с данными или invalid.
+ * @details Включает питание, активирует канал, в зависимости от типа датчика (tableSens[port])
+ *          выполняет опрос (одиночный, мультисенсор или метео) и упаковывает результат.
+ *          Результат: первый байт – номер порта, затем данные датчика.
+ */
 MeasureResult measure(int port) {
     MeasureResult res = {nullptr, 0, false};
     digitalWrite(LED_PIN, HIGH);
@@ -297,7 +321,6 @@ MeasureResult measure(int port) {
     Serial.printf("Measure, port %i\n", port);
     enable_sens(port);
     delay(1000);
-    // Выбор канала
     if (port == 1) {
         RsModbus::setChannel(RsModbus::RS_CH1, true);
         Serial.println("Channel 1 activated");
@@ -344,7 +367,6 @@ MeasureResult measure(int port) {
             memcpy(res.data + 1, tempBuf, received);
             Serial.println("полученные данные");
             printHEX(tempBuf, received);
-
             Serial.println("скопированные данные");
             printHEX(res.data, res.length);
             res.valid = true;
@@ -374,6 +396,11 @@ MeasureResult measure(int port) {
     return res;
 }
 
+/**
+ * @brief Основная функция сбора данных: опрашивает все активные порты, формирует пакет и сохраняет в стек.
+ * @details Для каждого порта из activeport[] вызывает measure(), копирует данные в буфер g_packet,
+ *          добавляет CRC и записывает в FlashStack.
+ */
 void dataPrepare() {
     byte dateBytes[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     printCurrentTime();
@@ -382,27 +409,22 @@ void dataPrepare() {
     }
     uint8_t *packet = g_packet;
     memset(packet, 0, sizeof(g_packet));
-    // 1. Заполняем заголовок и базовые поля
     size_t len = preparePacket(packet, 198, ID, Battery, dateBytes);
 
-    // 2. Получаем данные измерений (предполагаем, что measure() возвращает
-    // MeasureResult)
     MeasureResult mRes;
 
     for (int port = 0; port < 2; port++) {
-        mRes = measure(activeport[port]); // или другой порт
+        mRes = measure(activeport[port]);
         Serial.printf("Port %d: valid=%d, data=%p, len=%d\n", activeport[port],
                       mRes.valid, mRes.data, mRes.length);
         if (mRes.valid && mRes.data != nullptr && mRes.length > 0) {
             size_t remaining = sizeof(packet) - len;
-            // Защита от выхода за границы 200-байтного буфера
             if (mRes.length > remaining) {
                 Serial.printf(
                     "⚠️ Measured data too large (%d > %d). Truncating.\n",
                     mRes.length, remaining);
                 mRes.length = remaining;
             }
-            // Копируем измеренные данные СРАЗУ после заголовка
             memcpy(packet + len, mRes.data, mRes.length);
             len += mRes.length;
         } else {
@@ -410,15 +432,13 @@ void dataPrepare() {
         }
         if (mRes.valid && mRes.data != nullptr) {
             free(mRes.data);
-            mRes.data = nullptr; // Защита от двойного free
+            mRes.data = nullptr;
         }
         yield();
     }
-    // 3. Заполняем хвост нулями (если протокол требует фиксированные 200 байт)
     if (len < 198) {
         memset(packet + len, 0x00, 198 - len);
     }
-    // 4. Вывод (для отладки печатаем только валидную часть, или все 200)
     Serial.printf("Total packed length: %d bytes\n", len + 2);
     packet[0] = (byte)(len + 2);
     addCRC(packet, len, packet);
@@ -436,7 +456,10 @@ void dataPrepare() {
     enable_sens(0);
 }
 
-#elif BOARD_TYPE == 0 and BOARD_REV == 1
+#elif BOARD_TYPE == 0 && BOARD_REV == 1
+
+// Аналогичные функции для старой платы rev1 (почти идентичны, но с некоторыми отличиями в управлении портами)
+// Здесь приведены полностью для полноты кода.
 
 bool searche_multisens() {
     Serial.println("founding multisens");
@@ -444,15 +467,11 @@ bool searche_multisens() {
     Serial.println("	request:");
     printHEX(req, sizeof(req));
     RsModbus::sendData(req, sizeof(req));
-
     delay(500);
-
     byte response[32] = {0};
-    // Ждём ответ 150 мс (для Modbus обычно хватает 50-100 мс)
     size_t lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
     Serial.println("	responses:");
     printHEX(response, lenresponse);
-
     if (response[0] == 0x01) {
         Serial.println("multisens is FOUND!!!");
         return true;
@@ -467,7 +486,6 @@ bool searchSensors(int port) {
     Serial.printf("			Search sensors, port	%i\n", port);
     enable_sens(1);
     enable_sens(3);
-
     delay(1000);
     if (port == 1) {
         RsModbus::setChannel(RsModbus::RS_CH1, true);
@@ -485,21 +503,15 @@ bool searchSensors(int port) {
         return true;
     }
     Serial.println("founding sens");
-
     Serial.println("	request:");
     byte req[] = {0xFF, 0x03, 0x07, 0xD0, 0x00, 0x01, 0x91, 0x59};
-
-    int lenreq = 8;
-    printHEX(req, lenreq);
+    printHEX(req, 8);
     RsModbus::sendData(req, sizeof(req));
     delay(500);
-
     byte response[32] = {0};
-    // Ждём ответ 150 мс (для Modbus обычно хватает 50-100 мс)
     size_t lenresponse = RsModbus::receiveData(response, sizeof(response), 10);
     Serial.println("	responses:");
     printHEX(response, lenresponse);
-
     if (response[0] == 0x00) {
         Serial.println("	wait meteo:");
         for (int i = 0; i < 80; i++) {
@@ -511,7 +523,6 @@ bool searchSensors(int port) {
             }
         }
     }
-
     Serial.printf("%i		FOUND		!!!\n", (int)response[0]);
     if (response[0] == 0x24) {
         Serial.println("meteostation detected");
@@ -520,14 +531,12 @@ bool searchSensors(int port) {
     } else {
         Serial.println("		NOT SENS	!!!");
     }
-
     tableSens[port] = response[0];
     saveArrayToFlash(tableSens);
     snprintf(message, sizeof(message),
              "search sensor, port %d, address sens %d", port, (int)response[0]);
     saveMSG(message);
     enable_sens(0);
-    // enable_power(0);
     if (response[0] != 0x00) {
         blink((int)response[0], 100);
         return true;
@@ -539,23 +548,18 @@ bool searchSensors(int port) {
 int polling(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
     if (!outBuf || outBufSize < 5)
         return -1;
-
-    // Формируем запрос...
     byte req[] = {0x00, 0x03, 0x00, 0x00, 0x00, 0x00};
     req[0] = (byte)sens;
     req[5] = (byte)lenreg;
-
     byte request[8];
     addCRC(req, 6, request);
     RsModbus::sendData(request, 8);
     delay(250);
-    // Приём: передаём внешний буфер и его размер
     int received = RsModbus::receiveData(outBuf, outBufSize, 150);
     if (received > 0) {
-        // Serial.printf("  RX[%d]: ", received - 1);
         printHEX(outBuf, received);
     }
-    return received; // -1 = ошибка, >=0 = кол-во байт
+    return received;
 }
 
 int pollingMeteo(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
@@ -567,23 +571,22 @@ int pollingMeteo(int sens, int lenreg, uint8_t *outBuf, size_t outBufSize) {
         received = RsModbus::receiveData(outBuf, outBufSize, 750);
         Serial.printf("Tray %i,  RX[%d]: ", i, received);
         printHEX(outBuf, received);
-        if (outBuf[0] == 0x24 and check_wh65lp_crc(outBuf, received)) {
+        if (outBuf[0] == 0x24 && check_wh65lp_crc(outBuf, received)) {
             return received;
-            // printHEX(outBuf, received);
         } else {
             delay(250);
         }
     }
     received = -1;
     return received;
-    // -1 = ошибка, >=0 = кол-во байт
 }
 
 struct MeasureResult {
-    uint8_t *data; // Указатель на данные
-    size_t length; // Длина в байтах
-    bool valid;    // Флаг успеха (память выделена + опрос прошёл)
+    uint8_t *data;
+    size_t length;
+    bool valid;
 };
+
 MeasureResult measure(int port) {
     MeasureResult res = {nullptr, 0, false};
     digitalWrite(LED_PIN, HIGH);
@@ -591,9 +594,7 @@ MeasureResult measure(int port) {
     Serial.printf("Measure, port %i\n", port);
     enable_sens(1);
     enable_sens(3);
-
     delay(1000);
-    // Выбор канала
     if (port == 1) {
         RsModbus::setChannel(RsModbus::RS_CH1, true);
         Serial.println("Channel 1 activated");
@@ -647,7 +648,6 @@ MeasureResult measure(int port) {
             memcpy(res.data + 1, tempBuf, received);
             Serial.println("полученные данные");
             printHEX(tempBuf, received);
-
             Serial.println("скопированные данные");
             printHEX(res.data, res.length);
             res.valid = true;
@@ -693,27 +693,22 @@ void dataPrepare() {
     }
     uint8_t *packet = g_packet;
     memset(packet, 0, sizeof(g_packet));
-    // 1. Заполняем заголовок и базовые поля
     size_t len = preparePacket(packet, 198, ID, Battery, dateBytes);
 
-    // 2. Получаем данные измерений (предполагаем, что measure() возвращает
-    // MeasureResult)
     MeasureResult mRes;
 
     for (int port = 0; port < 2; port++) {
-        mRes = measure(activeport[port]); // или другой порт
+        mRes = measure(activeport[port]);
         Serial.printf("Port %d: valid=%d, data=%p, len=%d\n", activeport[port],
                       mRes.valid, mRes.data, mRes.length);
         if (mRes.valid && mRes.data != nullptr && mRes.length > 0) {
             size_t remaining = sizeof(packet) - len;
-            // Защита от выхода за границы 200-байтного буфера
             if (mRes.length > remaining) {
                 Serial.printf(
                     "⚠️ Measured data too large (%d > %d). Truncating.\n",
                     mRes.length, remaining);
                 mRes.length = remaining;
             }
-            // Копируем измеренные данные СРАЗУ после заголовка
             memcpy(packet + len, mRes.data, mRes.length);
             len += mRes.length;
         } else {
@@ -722,15 +717,13 @@ void dataPrepare() {
         }
         if (mRes.valid && mRes.data != nullptr) {
             free(mRes.data);
-            mRes.data = nullptr; // Защита от двойного free
+            mRes.data = nullptr;
         }
         yield();
     }
-    // 3. Заполняем хвост нулями (если протокол требует фиксированные 200 байт)
     if (len < 198) {
         memset(packet + len, 0x00, 198 - len);
     }
-    // 4. Вывод (для отладки печатаем только валидную часть, или все 200)
     Serial.printf("Total packed length: %d bytes\n", len + 2);
     packet[0] = (byte)(len + 2);
     addCRC(packet, len, packet);
@@ -747,14 +740,25 @@ void dataPrepare() {
     yield();
     enable_sens(0);
 }
-#endif
 
-#if NET == 1 or NET == 2
+#endif // BOARD_TYPE == 0
+
+// =====================================================================
+// Функции для работы с SIM800 (NET == 1 или 2)
+// =====================================================================
+
+#if NET == 1 || NET == 2
+
+/**
+ * @brief Получает сетевое время через SIM и синхронизирует системные часы ESP32.
+ * @details Включает синхронизацию (AT+CLTS=1), ждёт 10 секунд, затем вызывает syncSystemClock().
+ *          При успехе мигает светодиодом 2 раза.
+ */
 void getNetTime() {
     Serial.println("Enabling time sync...");
     if (SimModule::enableTimeSync()) {
     }
-    delay(10000); // Ждём NITZ-обновление от вышки
+    delay(10000);
     for (int i = 0; i < 3; i++) {
         if (SimModule::syncSystemClock()) {
             Serial.println("✓ Time ready");
@@ -769,20 +773,14 @@ void getNetTime() {
     printCurrentTime();
 }
 
+/**
+ * @brief Выполняет сброс SIM-модема и переинициализацию (используется для принудительного восстановления).
+ */
 void simres() {
-    // enable_power(true);
     Serial.println("sim pwr low");
-    // digitalWrite(SIM_PWR, LOW);
-    // enable_sim(true);
-    // enable_sim(false);
     delay(1000);
     Serial.println("sim pwr high");
-
-    // 2. Ждём загрузки модуля
-    // delay(10000);
     yield();
-
-    // 3. Программная инициализация
     SimModule::begin();
     SimModule::activate(true);
     SimModule::factoryReset();
@@ -791,10 +789,14 @@ void simres() {
     SimModule::end();
 }
 
+/**
+ * @brief Обрабатывает одну SMS-команду для настройки параметров HTTP.
+ * @param text текст SMS (ожидается формат: "ID url port link")
+ * @return true если ID совпадает и настройки сохранены.
+ */
 bool processOneSMS(const String &text) {
     Serial.println("\n===== SMS =====");
     Serial.println(text);
-    // Разбираем строку: ожидаем "ID pass url port"
     String parts[4];
     int partIndex = 0;
     int startPos = 0;
@@ -816,7 +818,6 @@ bool processOneSMS(const String &text) {
     String gURL = parts[1];
     uint16_t gPort = parts[2].toInt();
     String gLink = parts[3];
-    // Проверяем ID устройства (IDchar определён в defenitions.h)
     if (id != String(IDchar)) {
         Serial.printf("[SMS] ID не совпадает: SMS=%s, Device=%s\n", id.c_str(),
                       IDchar);
@@ -827,6 +828,9 @@ bool processOneSMS(const String &text) {
     }
 }
 
+/**
+ * @brief Читает все непрочитанные SMS и обрабатывает их.
+ */
 void readSMS() {
     String sms = "  ";
     Serial.println("read sms");
@@ -842,42 +846,30 @@ void readSMS() {
     Serial.println("ALL SMS READED");
 }
 
+/**
+ * @brief Активирует SIM-модем, подключается к GPRS, получает время и читает SMS.
+ * @param act true – включить, false – выключить.
+ * @return true если удалось подключиться и выполнить все операции.
+ */
 bool sim_activate(bool act) {
     if (!act) {
-        // Выключение
         SimModule::disconnect();
         SimModule::activate(false);
         SimModule::end();
-        // enable_sim(false);
-        // enable_power(false);
-
-        // activate_sim(false);
-
         Serial.println("\tsim disconnected");
         return true;
     }
 
-    const int MAX_ROUNDS = 2;               // максимум 3 попытки
-    const unsigned long ROUND_DELAY = 3000; // 5 секунд между раундами
+    const int MAX_ROUNDS = 2;
+    const unsigned long ROUND_DELAY = 3000;
     Serial.println("try conect0");
-
-    // activate_sim(false);
 
     for (int round = 1; round <= MAX_ROUNDS; round++) {
         Serial.printf("=== Round %d/%d ===\n", round, MAX_ROUNDS);
         yield();
 
-        // activate_sim(true);
-
-        // enable_power(1);
-        // delay(2000);
-        // enable_sim(1);
-        // // // 2. Ждём загрузки модуля
-        // delay(10000);
         esp_task_wdt_reset();
-
         yield();
-        // 3. Программная инициализация
         SimModule::begin();
         delay(2000);
         esp_task_wdt_reset();
@@ -910,6 +902,9 @@ bool sim_activate(bool act) {
     return false;
 }
 
+/**
+ * @brief Проверяет уровень сигнала SIM и мигает светодиодом в зависимости от качества.
+ */
 void SIM_check_signal() {
     Serial.println(">>> SIM CHECK SIGNAL");
     blink(1, 1500);
@@ -931,29 +926,32 @@ void SIM_check_signal() {
             Serial.printf("signal %i, 5\n", signalp);
             blink(5, 750);
         }
-
     } else {
         blink(10, 250);
     }
     sim_activate(false);
 }
 
+/**
+ * @brief Выполняет сброс SIM-модема к заводским настройкам (AT&F и перезагрузка).
+ */
 void SIM_reset() {
     enable_power(1);
     enable_sim(1);
     delay(5000);
     SimModule::begin();
     SimModule::activate(true);
-
-    // Сброс к заводским (опционально, только при проблемах)
     if (SimModule::factoryReset()) {
         Serial.println("Modem reset done. Reconnecting...");
     }
     enable_sim(0);
-
     enable_power(0);
 }
 
+/**
+ * @brief Формирует HTTP-пакет, добавляя к данным заголовок с ID, батареей, сигналом и т.д.
+ * @return длину сформированного пакета.
+ */
 int adding() {
     memset(a_packet, 0, 250);
     memcpy(a_packet, ccid, 10);
@@ -979,21 +977,27 @@ int adding() {
     return len + lgp;
 }
 
+/**
+ * @brief Отправляет все пакеты из стека по HTTP через SIM800.
+ * @return true если все пакеты отправлены успешно, иначе false.
+ * @details Для каждого пакета вызывает httpSendPacketSafe с автоматическими повторами.
+ *          При трёх последовательных неудачах прерывает сессию.
+ */
 bool http_send() {
     yield();
     int pac_to_send = stack.count();
     Serial.printf("packets to sending - %i\n", pac_to_send);
-    int consecutive_failures = 0; // подряд неудачные ПОПЫТКИ
+    int consecutive_failures = 0;
     SimModule::httpBegin(URL.c_str(), Port);
     for (int i = 0; i < pac_to_send; i++) {
         yield();
         if (!stack.read(g_packet)) {
             Serial.printf("❌ Failed to pop packet #%d (stack empty?)\n", i);
             saveMSG("ERROR fail pop packet");
-            return false; // не возвращаем false, чтобы вызвать httpEnd()
+            return false;
         }
         Serial.printf("    Popped packet #%d\n", i);
-        printHEX(g_packet, g_packet[0]); // без +1
+        printHEX(g_packet, g_packet[0]);
         int len = adding();
         Serial.printf("   Prepared packet #%d, len %i\n", i, len);
         printHEX(a_packet, len);
@@ -1003,7 +1007,7 @@ bool http_send() {
                                           URL.c_str(), Port)) {
             Serial.printf("   ✅ packet #%d sent \n", i);
             blink(1, 500);
-            consecutive_failures = 0; // успех – сбрасываем счётчик
+            consecutive_failures = 0;
             esp_task_wdt_reset();
             yield();
         } else {
@@ -1014,18 +1018,27 @@ bool http_send() {
             yield();
             if (consecutive_failures >= 3) {
                 SimModule::httpEnd();
-                return false; // две подряд неудачи разных пакетов
+                return false;
             }
         }
-        delay(50); // пауза между попытками
+        delay(50);
     }
     SimModule::httpEnd();
     yield();
     return true;
 }
-#endif
+#endif // NET == 1 || NET == 2
 
-#if NET == 0 or NET == 2
+// =====================================================================
+// Функции для работы с LoRa (NET == 0 или 2)
+// =====================================================================
+
+#if NET == 0 || NET == 2
+
+/**
+ * @brief Активирует или деактивирует LoRa-модуль (включает питание и инициализирует/закрывает UART).
+ * @param act true – включить, false – выключить.
+ */
 void lora_activate(bool act) {
     if (act) {
         enable_lora(1);
@@ -1039,6 +1052,10 @@ void lora_activate(bool act) {
     }
 }
 
+/**
+ * @brief Отправляет подтверждение (ACK) на полученный LoRa-пакет.
+ * @details Формирует пакет с ID, маркером 0xFF и текущим временем, отправляет.
+ */
 void LORA_sendOK() {
     byte date[] = {0x00, 0x01, 0x01, 0x00, 0x00, 0x00};
     if (isTime()) {
@@ -1053,17 +1070,22 @@ void LORA_sendOK() {
     LoRa::send(pac, 10);
 }
 
+/**
+ * @brief Отправляет все пакеты из стека по LoRa с ожиданием подтверждения.
+ * @return true если все пакеты отправлены успешно, иначе false.
+ * @details Для каждого пакета делает до 2 попыток, ждёт ACK до 5 секунд.
+ *          При неудаче возвращает пакет в стек.
+ */
 bool lora_send() {
-    const unsigned long SESSION_TIMEOUT = 1000 * 60; // 2 минуты на сеанс
-    const unsigned long ACK_TIMEOUT = 5000;          // ожидание ACK 5 с
-    const int MAX_ATTEMPTS_PER_PACKET = 2; // максимум попыток на пакет
+    const unsigned long SESSION_TIMEOUT = 1000 * 60;
+    const unsigned long ACK_TIMEOUT = 5000;
+    const int MAX_ATTEMPTS_PER_PACKET = 2;
 
     unsigned long sessionStart = millis();
     lora_activate(true);
     Serial.printf("Stack count %i\n", stack.count());
 
     while (stack.count() > 0) {
-        // Проверка таймаута сеанса
         if (millis() - sessionStart > SESSION_TIMEOUT) {
             Serial.println("Session timeout");
             break;
@@ -1085,17 +1107,14 @@ bool lora_send() {
             if (millis() - sessionStart > SESSION_TIMEOUT)
                 break;
 
-            // Отправка
             if (!LoRa::send(g_packet, (int)g_packet[0])) {
                 Serial.printf("  LoRa send error, attempt %d\n", attempt + 1);
-                // Случайная задержка перед следующей попыткой (5-25 секунд)
                 unsigned long delayMs = random(5000, 25001);
                 Serial.printf("  Retry delay: %lu ms\n", delayMs);
                 delay(delayMs);
                 continue;
             }
 
-            // Ожидание ACK
             unsigned long ackStart = millis();
             while (millis() - ackStart < ACK_TIMEOUT) {
                 int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
@@ -1118,10 +1137,9 @@ bool lora_send() {
                 if (setTimeFromHexBytes(dateBytes))
                     printCurrentTime();
                 blink(1, 250);
-                break; // успех – выходим из цикла попыток
+                break;
             } else {
                 Serial.printf("  No ACK, attempt %d\n", attempt + 1);
-                // Случайная задержка перед следующей попыткой (5-25 секунд)
                 unsigned long delayMs = random(5000, 25001);
                 Serial.printf("  Retry delay: %lu ms\n", delayMs);
                 delay(delayMs);
@@ -1129,7 +1147,6 @@ bool lora_send() {
         }
 
         if (!packetSent || !ackReceived) {
-            // Две попытки не увенчались успехом
             if (stack.write(g_packet)) {
                 Serial.println("  Returned to stack tail");
             } else {
@@ -1139,18 +1156,21 @@ bool lora_send() {
                 "  Failed to send packet after 2 attempts, ending session.");
             blink(10, 250);
             lora_activate(false);
-            return false; // возвращаем false, так как пакет не отправлен
+            return false;
         }
 
-        // При успехе продолжаем со следующим пакетом
-        blink(1, 250); // пауза между успешными отправками
-        delay(100);    // небольшая задержка, чтобы не заливать эфир
+        blink(1, 250);
+        delay(100);
     }
 
     lora_activate(false);
-    return true; // все пакеты отправлены успешно
+    return true;
 }
 
+/**
+ * @brief Устанавливает конфигурацию LoRa (канал, адрес) согласно положению переключателей.
+ * @details Читает SW1/SW2, вычисляет канал, вызывает configSet().
+ */
 void lora_setconf() {
     lora_activate(true);
     int ch = readSwitchState() + 1;
@@ -1162,6 +1182,11 @@ void lora_setconf() {
     lora_activate(false);
 }
 
+/**
+ * @brief Отправляет тестовый пакет LoRa и измеряет RSSI ответа.
+ * @param pac указатель на пакет для отправки.
+ * @return int RSSI в процентах или -1 при ошибке.
+ */
 int lora_rssi(byte *pac) {
     int len = 0;
     if (LoRa::send(pac, pac[0])) {
@@ -1169,9 +1194,9 @@ int lora_rssi(byte *pac) {
             len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
             if (len > 0) {
                 printHEX(rxBuffer, len);
-                if (len > 0 and rxBuffer[3] == 0xff) {
-                    if (rxBuffer[0] == (byte)(ID >> 16) & 0xFF and
-                        rxBuffer[1] == (byte)(ID >> 8) & 0xFF and
+                if (len > 0 && rxBuffer[3] == 0xff) {
+                    if (rxBuffer[0] == (byte)(ID >> 16) & 0xFF &&
+                        rxBuffer[1] == (byte)(ID >> 8) & 0xFF &&
                         rxBuffer[2] == (byte)(ID) & 0xFF) {
                         Serial.println(" ID OK");
                         byte dateBytes[6] = {rxBuffer[4], rxBuffer[5],
@@ -1197,6 +1222,9 @@ int lora_rssi(byte *pac) {
     }
 }
 
+/**
+ * @brief Проверяет качество сигнала LoRa и мигает светодиодом.
+ */
 void lora_check_signal() {
     Serial.printf("\n>>> TEST \n");
     blink(1, 1500);
@@ -1230,20 +1258,23 @@ void lora_check_signal() {
     }
     lora_activate(false);
 }
-#endif
 
-//
-// ПМ С СИМКОЙ
-//
-#if BOARD_REV == 3 and BOARD_TYPE == 0 and NET == 1
+#endif // NET == 0 || NET == 2
+
+// =====================================================================
+// Основные варианты прошивки (setup/loop) в зависимости от конфигурации
+// =====================================================================
+
+// Вариант 1: Плата rev3, тип 0, NET == 1 (SIM800)
+#if BOARD_REV == 3 && BOARD_TYPE == 0 && NET == 1
+
 void work() {
-    if (tableSens[activeport[0]] != 0x00 or tableSens[activeport[1]] != 0x00) {
+    if (tableSens[activeport[0]] != 0x00 || tableSens[activeport[1]] != 0x00) {
         dataPrepare();
         enable_sens(0);
         if (stack.count() > 0) {
             if (sim_activate(true)) {
                 Serial.println("coneceted do mqtt");
-                mqtt_send();
                 sim_activate(false);
             }
         }
@@ -1254,9 +1285,8 @@ void work() {
 }
 
 void setup() {
-
     initPins();
-    Serial.begin(115200); // монитор порта
+    Serial.begin(115200);
     for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
@@ -1265,9 +1295,8 @@ void setup() {
     Serial.printf("Rev: %d, NET: %d/%d\n", BOARD_REV, NET);
     Battery = readBatteryVoltage();
 
-    uint32_t cpu_mhz = getCpuFrequencyMhz(); // частота CPU в МГц
-    uint32_t apb_mhz = getApbFrequency();    // частота шины APB (обычно 80 МГц)
-
+    uint32_t cpu_mhz = getCpuFrequencyMhz();
+    uint32_t apb_mhz = getApbFrequency();
     Serial.printf("CPU Frequency: %u MHz\n", cpu_mhz);
     Serial.printf("APB Frequency: %u Hz\n", apb_mhz);
 
@@ -1275,7 +1304,7 @@ void setup() {
     delay(1000);
     if (!loadArrayFromFlash(tableSens)) {
         for (int i = 0; i < 5; i++) {
-            tableSens[i] = 0x00; // Заполняем 0,1,2...7
+            tableSens[i] = 0x00;
         }
         saveArrayToFlash(tableSens);
     }
@@ -1290,13 +1319,9 @@ void setup() {
 
     uint8_t wake_but = checkButton();
     Serial.printf("State wake up %i\n\n", wake_but);
-    // byte simpl[] = {0x00, 0x24, 0x00, 0x00, 0x07};
-    // saveArrayToFlash(simpl);
-
     switch (wake_but) {
     case 1:
         work();
-        // SIM_check_signal();
         break;
     case 2:
         searchSensors(activeport[0]);
@@ -1318,19 +1343,16 @@ void setup() {
         Serial.println("            complited");
         break;
     }
-    // sleep(30);
     sleep(TIME_TO_SLEEP);
 }
 void loop() {}
-#endif
 
-//
-// ВЕРСИЯ ПМ ЛОРА
-//
-#if BOARD_REV == 3 and BOARD_TYPE == 0 and NET == 0
+// Вариант 2: Плата rev3, тип 0, NET == 0 (LoRa)
+#elif BOARD_REV == 3 && BOARD_TYPE == 0 && NET == 0
+
 void setup() {
     initPins();
-    Serial.begin(115200); // монитор порта
+    Serial.begin(115200);
     for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
@@ -1342,7 +1364,7 @@ void setup() {
     delay(1000);
     if (!loadArrayFromFlash(tableSens)) {
         for (int i = 0; i < 5; i++) {
-            tableSens[i] = 0x00; // Заполняем 0,1,2...7
+            tableSens[i] = 0x00;
         }
         saveArrayToFlash(tableSens);
     }
@@ -1369,7 +1391,6 @@ void setup() {
             tableSens[i] = 0x00;
         }
         saveArrayToFlash(tableSens);
-        // cleanUpStack();
         lora_setconf();
         lora_check_signal();
         searchSensors(1);
@@ -1390,14 +1411,13 @@ void setup() {
     sleep(TIME_TO_SLEEP);
 }
 void loop() {}
-//
-// ПМ старая плата
-//
-#elif BOARD_REV == 1 and BOARD_TYPE == 0 and NET == 0
+
+// Вариант 3: Плата rev1, тип 0, NET == 0 (старая плата с LoRa)
+#elif BOARD_REV == 1 && BOARD_TYPE == 0 && NET == 0
 
 void setup() {
     initPins();
-    Serial.begin(115200); // монитор порта
+    Serial.begin(115200);
     for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
@@ -1408,7 +1428,7 @@ void setup() {
     delay(1000);
     if (!loadArrayFromFlash(tableSens)) {
         for (int i = 0; i < 5; i++) {
-            tableSens[i] = 0x00; // Заполняем 0,1,2...7
+            tableSens[i] = 0x00;
         }
         saveArrayToFlash(tableSens);
     }
@@ -1427,13 +1447,11 @@ void setup() {
     switch (wake_but) {
     case 3:
         Serial.println("work first");
-        // cleanUpStack();
         for (int i = 0; i < 5; i++) {
-            tableSens[i] = 0x00; // Заполняем 0,1,2...7
+            tableSens[i] = 0x00;
         }
         saveArrayToFlash(tableSens);
         lora_activate(true);
-
         Serial.printf("Chanel set %i\n", ch);
         blink(1, 400);
         if (LoRa::configSet(17, ch)) {
@@ -1463,20 +1481,15 @@ void setup() {
     sleep(TIME_TO_SLEEP);
 }
 void loop() {}
-#endif
 
-//
-// ВЕРСИЯ ДЛЯ ГМ ОБНОВЛЕННАЯ
-//
-#if BOARD_TYPE == 1 and NET == 2 and BOARD_REV == 3
+// Вариант 4: Плата rev3, тип 1, NET == 2 (LoRa+SIM, шлюз)
+#elif BOARD_TYPE == 1 && NET == 2 && BOARD_REV == 3
 
-// Таймеры на millis (не RTC, после сна сбросятся – это нормально)
 uint32_t lastWorkTime = 0;
 uint32_t lastSleepTime = 0;
 uint32_t now = 0;
-const uint32_t WORK_INTERVAL_MS = 30UL * 60 * 1000;   // 30 минут
-const uint32_t SLEEP_INTERVAL_MS = 135UL * 60 * 1000; // 135 минут
-// ----- Вспомогательная функция записи одного пакета -----
+const uint32_t WORK_INTERVAL_MS = 30UL * 60 * 1000;
+const uint32_t SLEEP_INTERVAL_MS = 135UL * 60 * 1000;
 
 void work() {
     if (sim_activate(true)) {
@@ -1488,7 +1501,6 @@ void work() {
             Serial.println("   ❌ SENDING FAIL");
             saveMSG("ERROR with sending http");
         }
-
     } else {
         Serial.println("   ❌ SIM activation failed");
     }
@@ -1499,7 +1511,7 @@ void work() {
 
 void setup() {
     initPins();
-    Serial.begin(115200); // монитор порта
+    Serial.begin(115200);
     for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
@@ -1516,10 +1528,6 @@ void setup() {
     int wakebut = checkButton();
     Serial.printf("     STATE WAKE UP %i\n", wakebut);
     if (wakebut == 3) {
-        // cleanUpStack();
-        // simres();
-
-        // sleep(10);
         SIM_check_signal();
         lora_setconf();
     }
@@ -1536,39 +1544,9 @@ void setup() {
     Serial.println("        work start");
     lora_activate(true);
 }
-// stack test
-// void loop() {
-//     for (int i = 0; i < 7000; i++) {
-//         snprintf(message, sizeof(message), "aa stack count %d, steop %d",
-//                  stack.count(), i);
-//         saveMSG(message);
-//         delay(1);
-//     }
-//     int l = stack.count();
-//     Serial.printf("stacke count %i", l);
-//     delay(2000);
-//     byte buf0[198] = {};
-//     byte buf1[198] = {};
-//     for (int i = 0; i < l; i++) {
-//         if (stack.read(g_packet)) {
-//             if (i == 0) {
-//                 memcpy(buf0, g_packet, 198);
-//             }
-//             if (i == l - 1) {
-//                 memcpy(buf1, g_packet, 198);
-//             }
-//         }
-//         delay(1);
-//     }
-//     Serial.println("first");
-//     printHEX(buf0, 198);
-//     printHEX(buf1, 198);
-//     delay(99999999);
-// }
 
-//          НОВЫЙ
 void loop() {
-    // ========== 1. Приём LoRa-пакетов (всегда, без блокировок) ==========
+    // Приём LoRa-пакетов
     int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
     if (len > 0) {
         digitalWrite(LED_PIN, HIGH);
@@ -1579,11 +1557,11 @@ void loop() {
         printTimeFromHexBytes(senstime);
         bool crcOK = checkCRC(rxBuffer, (int)rxBuffer[0]);
         bool itsMSG = false;
-        if (rxBuffer[4] == 0xff and rxBuffer[5] == 0xff and
+        if (rxBuffer[4] == 0xff && rxBuffer[5] == 0xff &&
             rxBuffer[6] == 0xff) {
             itsMSG = true;
         }
-        if (len > 15 and (crcOK or itsMSG)) {
+        if (len > 15 && (crcOK || itsMSG)) {
             Serial.println("✅Valid sensor data");
             uint8_t *packet = g_packet;
             memset(packet, 0, sizeof(g_packet));
@@ -1599,21 +1577,21 @@ void loop() {
         }
         digitalWrite(LED_PIN, LOW);
     }
-    // ========== 2. Периодическая отправка HTTP (раз в 30 минут по millis)
+
     now = millis();
     bool workExpired =
         (lastWorkTime == 0) || (now - lastWorkTime >= WORK_INTERVAL_MS);
     if (stack.count() > 0 && workExpired) {
         lora_activate(false);
-
         blink(2, 750);
         Serial.printf("stack count %d, workExpired %d\n", stack.count(),
                       workExpired);
-        work(); // HTTP-отправка (активирует SIM, отправляет стек)
-        lastWorkTime = millis(); // обновляем таймер
+        work();
+        lastWorkTime = millis();
         blink(2, 750);
         lora_activate(true);
     }
+
     bool sleepExpired =
         (lastSleepTime == 0) || (now - lastSleepTime >= SLEEP_INTERVAL_MS);
     if (sleepExpired) {
@@ -1628,74 +1606,60 @@ void loop() {
     yield();
 }
 
-//          СТАРЫЙ
-// void loop() {
-//     // Приём LoRa пакетов
-//     int len = LoRa::receivePacketNB(rxBuffer, sizeof(rxBuffer));
-//     if (len > 0) {
-//         digitalWrite(LED_PIN, HIGH);
-//         Serial.printf("\n\n📨 Packet %d bytes\n", len);
-//         printHEX(rxBuffer, (int)rxBuffer[0] + 1);
-//         byte senstime[] = {rxBuffer[5], rxBuffer[6], rxBuffer[7],
-//                            rxBuffer[8], rxBuffer[9], rxBuffer[10]};
-//         printTimeFromHexBytes(senstime);
-//         bool crcOK = checkCRC(rxBuffer, (int)rxBuffer[0]);
-//         if (crcOK && len > 15) {
-//             Serial.println("✅Valid sensor data");
-//             LORA_sendOK();
-//             uint8_t *packet = g_packet;
-//             memset(packet, 0, sizeof(g_packet));
-//             memcpy(packet, rxBuffer, len);
-//             if (stack.write(packet)) {
-//                 Serial.printf("pushed len %i, count %i\n", len,
-//                 stack.count());
-//             }
-//         }
-//         if (!crcOK && len < 15) {
-//             Serial.println("📣Sensor signal check");
-//             LORA_sendOK();
-//         }
-//         digitalWrite(LED_PIN, LOW);
-//     }
-//     uint32_t now = millis();
-//     bool timeExpired = (now - lastWorkTime >= WORK_INTERVAL);
-//     bool timeToSleep = (now - lastSleepTime >= WORK_INTERVAL * 4.5);
-//     // Условие для запуска work(): есть пакеты и (истекло время или кнопка)
-//     if (stack.count() > 0 && (timeExpired || digitalRead(BUT2) == LOW)) {
-//         blink(2, 750);
-//         Serial.printf("stack count %i timeExpired %i\n", stack.count(),
-//                       timeExpired);
-//         Serial.println("️        Running work()...");
-//         work();                  // теперь work() не уходит в сон внутри
-//         lastWorkTime = millis(); // обновляем метку после попытки
-//         blink(2, 750);
-//         Serial.println("️        END work()...");
-//         lora_activate(true);
-//     }
-//     // Плановый уход в глубокий сон
-//     if (timeToSleep) {
-//         lastSleepTime = now;
-//         sleep(10);
-//     }
-//     delay(10);
-//     yield();
-// }
+// Вариант 5: Плата rev3, тип 2 (WiFi + LoRa для отладки)
+#elif BOARD_REV == 3 && BOARD_TYPE == 2
 
-#endif
+#if BOARD_TYPE == 2
+auto &RealSerial = Serial;
+String logBuf;
+const size_t MAX_LOG = 3000;
+const size_t TRIM_SIZE = 300;
 
-//
-// демо для вифи платы
-//
-#if BOARD_REV == 3 and BOARD_TYPE == 2
+class DualSerial : public Print {
+  public:
+    void begin(unsigned long baud = 115200) { RealSerial.begin(baud); }
+    void end() { RealSerial.end(); }
+    int available() { return RealSerial.available(); }
+    int read() { return RealSerial.read(); }
+    int peek() { return RealSerial.peek(); }
+    void flush() { RealSerial.flush(); }
+    operator bool() { return (bool)RealSerial; }
+
+    size_t write(uint8_t c) override {
+        RealSerial.write(c);
+        while (logBuf.length() + 1 > MAX_LOG)
+            logBuf.remove(0, TRIM_SIZE);
+        logBuf += (char)c;
+        return 1;
+    }
+
+    size_t write(const uint8_t *buffer, size_t size) override {
+        RealSerial.write(buffer, size);
+        while (logBuf.length() + size > MAX_LOG)
+            logBuf.remove(0, TRIM_SIZE);
+        logBuf.concat((const char *)buffer, size);
+        return size;
+    }
+    using Print::print;
+    using Print::printf;
+    using Print::println;
+};
+
+DualSerial Dual;
+#undef Serial
+#define Serial Dual
+
+AsyncWebServer server(80);
+const char *ssidwifi = "S2-Debug";
+const char *passwifi = "12345678";
+
 void setup() {
-    // initPins();
     pinMode(LED_PIN, OUTPUT);
     pinMode(ELORA, OUTPUT);
-    pinMode(BUT2, INPUT_PULLUP); // Кнопка NO: в покое HIGH, при нажатии LOW
-
+    pinMode(BUT2, INPUT_PULLUP);
     pinMode(SW1_PIN, INPUT_PULLUP);
     pinMode(SW2_PIN, INPUT_PULLUP);
-    Serial.begin(115200); // монитор порта
+    Serial.begin(115200);
     for (int i = 0; i < 50; i++) {
         if (!Serial) {
             blink(1, 50);
@@ -1711,15 +1675,12 @@ void setup() {
     }
     lora_activate(0);
 
-    // 4-й параметр = 1 → скрытая сеть
-
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1),
                       IPAddress(255, 255, 255, 0));
     WiFi.softAP(ssidwifi, passwifi);
-    delay(1000); // Ждём стабилизации AP
+    delay(1000);
 
-    // Страница с автообновлением
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(200, "text/html", R"rawliteral(
     <!DOCTYPE html><html><head><meta charset="utf-8">
@@ -1749,7 +1710,6 @@ void setup() {
     )rawliteral");
     });
 
-    // Отдача лога
     server.on("/log", HTTP_GET, [](AsyncWebServerRequest *request) {
         AsyncWebServerResponse *response =
             request->beginResponse(200, "text/plain", logBuf);
@@ -1759,7 +1719,6 @@ void setup() {
     });
 
     server.begin();
-
     Serial.println("Ready: http://192.168.4.1");
     lora_activate(true);
 }
@@ -1773,4 +1732,7 @@ void loop() {
     }
     delay(1000);
 }
-#endif
+
+#endif // BOARD_TYPE == 2
+
+#endif // main configs

@@ -7,18 +7,27 @@
 
 extern esp_adc_cal_characteristics_t adc_chars;
 extern Preferences preferences;
+
 uint8_t readSwitchState();
+
 uint8_t checkButton();
+
 void waitForButtonRelease();
+
 uint8_t crc8_wh65lp(const uint8_t *data, uint8_t len);
 
 bool check_wh65lp_crc(uint8_t *response, uint8_t len);
-// Инициализация кнопок и настройки сна
+
 void initPins();
+
 int readBatteryVoltage();
+
 uint8_t rssiToPercent(uint8_t rssiByte);
+
 void blink(int count, int delayy);
+
 byte rssip(byte rssi);
+
 void printHEX(byte data[], int len);
 
 void saveArrayToFlash(byte data[]);
@@ -28,22 +37,36 @@ bool loadArrayFromFlash(byte data[]);
 void byteArrayToHexString(const byte *byteArray, int length, String str);
 
 void enable_power(bool act);
+
 void enable_sens(int port);
+
 void enable_sim(bool act);
+
 void enable_lora(bool act);
+
 void activate_sim(bool act);
+
 void addCRC(byte req[], int dataLength, byte response[]);
-bool setTimeFromHexBytes(const byte buf[6]);
+
 void outCRC(byte req[], int dataLength, byte outcrc[]);
 
+bool setTimeFromHexBytes(const byte buf[6]);
+
 void sleep(int time);
-void printCurrentTime();              // DEC: YYYY-MM-DD HH:MM:SS
-uint64_t getPackedTimeHex();          // ГГММДДЧЧММСС → uint64_t
-void getPackedTimeBytes(byte buf[6]); // Для отправки в RS485
+
+void printCurrentTime();
+
+uint64_t getPackedTimeHex();
+
+void getPackedTimeBytes(byte buf[6]);
 
 size_t preparePacket(uint8_t *buf, int len, uint32_t id, uint8_t battery,
                      byte date[6]);
-void encode_to_buffer(const char *input, uint8_t *buffer) ;
+
+void encode_to_buffer(const char *input, uint8_t *buffer);
+
 bool isTime();
+
 void printTimeFromHexBytes(const byte buf[6]);
+
 bool checkCRC(byte response[], int lenresponse);
